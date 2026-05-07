@@ -1,0 +1,63 @@
+import dlib
+from skimage import io  
+from glob import glob
+import os
+
+target_dir = r"C:\Users\User\Documents\GitHub\creative-convergence-project1\개발일지\임선우"
+
+#해당 폴더로 이동 
+os.chdir(target_dir) 
+
+path = os.getcwd() #현재 경로 가져오기 
+
+#사진 위치와 잘린 이미지를 저장할 위치 설정
+fpath = path 
+fpath2 = os.path.join(path, "croped_images")
+
+#저장 폴더가 없으면 생성
+if not os.path.exists(fpath2):
+    os.makedirs(fpath2)
+
+print("현재 작업 폴더:", path)
+print("결과 저장 폴더:", fpath2)
+
+#모델 파일 로드
+face_detector = dlib.get_frontal_face_detector()
+face_68_landmark = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
+
+i = 100 #[추가] image file 
+for file in glob(fpath+"/*.jpg") : #폴더에서 순서대로 jpg 파일 읽기 
+    image = io.imread(file) #image file 읽기 
+    print(image.shape) #image 모양 
+    
+    #윈도에 image 표시 
+    win = dlib.image_window()
+    win.set_image(image) #1차 : 원본 이미지 표시 
+    
+    #image에서 얼굴인식     
+    faces = face_detector(image, 1) #두번째 인수=1 : 업샘플링 횟수 
+    print('인식한 face size =', len(faces))
+    '''
+    업샘플링 횟수 : 더 많은 이미지를 인식하게한다. 보통 1 지정
+    '''    
+    
+    #image 크롭(crop) & file save : 68 point 기준 자르기 
+    for face in faces : # 1명 -> 1회 반복     
+        i += 1 #[추가]    
+        print(face) #감지된 image 사각점 좌표       
+        print(f'왼쪽 : {face.left()}, 위 : {face.top()}, 오른쪽 : {face.right()}, 아래 : {face.bottom()}')
+                
+        #윈도에 얼굴 표시 : face 사각점 좌표 겹치기 
+        win.add_overlay(face) # 2차 : 이미지 위에 얼굴 겹치기 
+        
+        #face 사각점안에 68 point 겹치기
+        face_landmark = face_68_landmark(image, face)
+        win.add_overlay(face_landmark) #3차 : 68 포인트 겹치기
+        
+        #[추가] 크롭(crop) : 얼굴 부분만 자르기 : image file save 
+        # crop = image[face.top():face.bottom(), face.left():face.right()] #image[h,w]
+        
+        #croped images svae 
+        #io.imsave(fpath2 + "/croped" + str(i) + ".jpg", crop)
+
+dlib.hit_enter_to_continue()
