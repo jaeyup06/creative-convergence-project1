@@ -1,6 +1,6 @@
 # requirements.txt
 opencv-python
-pyaudio
+sounddevice
 librosa
 dlib
 openpyxl
