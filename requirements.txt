@@ -1,0 +1,9 @@
+# requirements.txt
+opencv-python
+pyaudio
+librosa
+dlib
+openpyxl
+requests
+numpy
+Pillow
