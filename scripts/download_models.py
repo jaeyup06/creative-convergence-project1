@@ -1,6 +1,9 @@
-import urllib.request
+import requests
+import urllib3
 import bz2
 import os
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 MODEL_URL = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
 OUTPUT_DIR = "data/models"
@@ -15,7 +18,10 @@ def download_dlib_model():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("dlib 68 모델 다운로드 중")
-    urllib.request.urlretrieve(MODEL_URL, COMPRESSED_PATH)
+    response = requests.get(MODEL_URL, stream=True, verify=False)
+    with open(COMPRESSED_PATH, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
     print("다운로드 완료")
 
     print("압축 해제 중")
