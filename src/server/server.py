@@ -3,17 +3,16 @@
 
 import socket
 import threading
-from src.common.config import SERVER_IP, TCP_PORT, UDP_AUDIO_PORT, UDP_VIDEO_PORT
+from src.common.config import SERVER_IP, TCP_PORT, UDP_AUDIO_PORT
+from src.server.video_receiver import receive_video
 
 # 소켓 생성
 tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-udp_video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # 바인딩
 tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 tcp_sock.bind((SERVER_IP, TCP_PORT))
-udp_video_sock.bind((SERVER_IP, UDP_VIDEO_PORT))
 udp_audio_sock.bind((SERVER_IP, UDP_AUDIO_PORT))
 
 # 클라이언트 소켓 (TCP 연결 후 저장)
@@ -40,23 +39,13 @@ def handle_tcp():
     conn.close()
     print("TCP 연결 종료")
 
-def handle_video():
-    # UDP 영상 수신
-    print(f"UDP 영상 대기 중 - 포트 {UDP_VIDEO_PORT}")
-    while True:
-        try:
-            data, addr = udp_video_sock.recvfrom(65535)
-            # TODO: 영상 디코딩 및 출력 (video_receiver.py 연동)
-        except OSError:
-            break
-
 def handle_audio():
     # UDP 음성 수신
     print(f"UDP 음성 대기 중 - 포트 {UDP_AUDIO_PORT}")
     while True:
         try:
             data, addr = udp_audio_sock.recvfrom(4096)
-            # TODO: 음성 재생 및 분석 (audio_analyzer.py 연동)
+            # TODO: audio_analyzer.py 연동
         except OSError:
             break
 
@@ -68,15 +57,8 @@ def send_message(msg: str):
 
 if __name__ == "__main__":
     threading.Thread(target=handle_tcp,   daemon=True).start()
-    threading.Thread(target=handle_video, daemon=True).start()
     threading.Thread(target=handle_audio, daemon=True).start()
 
     print("서버 실행 중 - Ctrl+C 로 종료")
-    try:
-        while True:
-            pass
-    except KeyboardInterrupt:
-        print("서버 종료")
-        tcp_sock.close()
-        udp_video_sock.close()
-        udp_audio_sock.close()
+    # cv2.imshow는 메인 스레드에서 실행해야 함
+    receive_video()
