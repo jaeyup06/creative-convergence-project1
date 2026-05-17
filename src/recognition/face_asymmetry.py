@@ -1,3 +1,6 @@
+# src/recognition/face_asymmetry.py
+# Dlib 68포인트 랜드마크 기반 안면 비대칭 측정 모듈
+
 import cv2
 import dlib
 import numpy as np
@@ -32,7 +35,25 @@ class FaceAsymmetryAnalyzer:
 
         self.detector = dlib.get_frontal_face_detector()
         self.predictor = dlib.shape_predictor(MODEL_PATH)
-        print("[FaceAsymmetry] 모델 로드 완료")
+
+        # 캘리브레이션 기준점 (무표정 상태의 비대칭 지수)
+        self.baseline = None
+
+        print("[FaceAsymmetry] Model loaded")
+
+    def calibrate(self, frame):
+        """
+        무표정 상태를 기준점(Baseline)으로 저장
+        반환: 기준 비대칭 지수 또는 None (얼굴 미감지)
+        """
+        landmarks = self.get_landmarks(frame)
+        if landmarks is None:
+            print("[FaceAsymmetry] Calibration failed - No face detected")
+            return None
+
+        self.baseline = self.calculate_asymmetry(landmarks)
+        print(f"[FaceAsymmetry] Baseline saved: {self.baseline:.4f}")
+        return self.baseline
 
     def get_landmarks(self, frame):
         """
@@ -82,16 +103,28 @@ class FaceAsymmetryAnalyzer:
     def draw_landmarks(self, frame, landmarks):
         """
         프레임에 랜드마크 점과 비대칭 수치를 오버레이로 그리기
+        baseline이 있으면 기준 대비 변화량도 함께 표시
         """
         asymmetry = self.calculate_asymmetry(landmarks)
 
         for i, (x, y) in enumerate(landmarks):
             cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
-        # 비대칭 지수 텍스트 출력
-        text = f"Asymmetry: {asymmetry:.4f}"
+        # 비대칭 지수 텍스트
         color = (0, 255, 0) if asymmetry < 0.1 else (0, 165, 255) if asymmetry < 0.2 else (0, 0, 255)
-        cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        cv2.putText(frame, f"Asymmetry: {asymmetry:.4f}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
+        # 기준점 대비 변화량 표시
+        if self.baseline is not None:
+            delta = asymmetry - self.baseline
+            delta_color = (0, 255, 0) if delta <= 0 else (0, 0, 255)
+            delta_sign = "+" if delta > 0 else ""
+            cv2.putText(frame, f"Delta: {delta_sign}{delta:.4f} (Baseline: {self.baseline:.4f})",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, delta_color, 2)
+        else:
+            cv2.putText(frame, "No baseline - Press B to calibrate",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
         return frame, asymmetry
 
@@ -116,7 +149,7 @@ if __name__ == '__main__':
     analyzer = FaceAsymmetryAnalyzer()
     cap = cv2.VideoCapture(0)
 
-    print("실행 중... 종료하려면 'q' 입력.")
+    print("실행 중... 'q'를 누르면 종료됩니다.")
 
     while True:
         ret, frame = cap.read()
