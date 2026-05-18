@@ -23,12 +23,14 @@ class ServerGUI:
         self.session_active = False
         self.patient_muted = False
         self.doctor_muted = False
+        self.camera_active = False
 
         self.on_send_message = None
         self.on_session_start = None
         self.on_session_stop = None
         self.on_mute_patient = None
         self.on_mute_doctor = None
+        self.on_camera_toggle = None
 
         self._build_ui()
 
@@ -71,7 +73,6 @@ class ServerGUI:
         self.patient_canvas.create_text(320, 240, text="환자 접속 대기 중",
                                          fill="#AAAAAA", font=FONT)
 
-        # 환자 음량 바
         vol_frame1 = tk.Frame(patient_video_frame, bg="#FFFFFF")
         vol_frame1.pack(fill=tk.X, pady=(6, 0))
 
@@ -81,7 +82,6 @@ class ServerGUI:
                                                 mode="determinate", maximum=100)
         self.patient_vol_bar.pack(fill=tk.X, expand=True, pady=2)
 
-        # 어깨/베이스라인 버튼
         btn_frame1 = tk.Frame(patient_video_frame, bg="#FFFFFF")
         btn_frame1.pack(fill=tk.X, pady=(4, 0))
         self.shoulder_btn = tk.Button(btn_frame1, text="어깨 기준점 설정",
@@ -105,7 +105,6 @@ class ServerGUI:
         self.doctor_canvas.create_text(213, 160, text="카메라 꺼짐",
                                         fill="#AAAAAA", font=FONT)
 
-        # 의료진 음량 바 (grid 고정)
         vol_frame2 = tk.Frame(doctor_video_frame, bg="#FFFFFF")
         vol_frame2.pack(fill=tk.X, pady=(6, 0))
         vol_frame2.columnconfigure(1, weight=1)
@@ -122,12 +121,12 @@ class ServerGUI:
                                                mode="determinate", maximum=100)
         self.doctor_vol_bar.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=2)
 
-        self.camera_btn = tk.Button(doctor_video_frame, text="카메라 켜기 / 끄기",
+        self.camera_btn = tk.Button(doctor_video_frame, text="카메라 켜기",
                                      font=FONT_SMALL, relief=tk.FLAT,
-                                     bg="#F0F0F0", padx=8, pady=4)
+                                     bg="#F0F0F0", padx=8, pady=4,
+                                     command=self._toggle_camera)
         self.camera_btn.pack(fill=tk.X, pady=(4, 0))
 
-        # 회차별 추이 그래프 (내 화면 박스 안)
         tk.Label(doctor_video_frame, text="회차별 재활 추이", font=FONT_SMALL,
                  bg="#FFFFFF", fg="#888888").pack(anchor=tk.W, pady=(8, 2))
         self.graph_canvas = tk.Canvas(doctor_video_frame, height=100, bg="#FFFFFF",
@@ -170,8 +169,6 @@ class ServerGUI:
                            bg="#F5F5F0")
             val.pack()
             self.metrics[key] = val
-
-
 
         # ── 세션 버튼 ──────────────────────────────────────────
         session_frame = tk.Frame(self.root, bg="#F5F5F0")
@@ -308,6 +305,18 @@ class ServerGUI:
         self.shoulder_btn.config(state=tk.NORMAL)
         self.baseline_btn.config(state=tk.NORMAL)
 
+    def _toggle_camera(self):
+        self.camera_active = not self.camera_active
+        if self.camera_active:
+            self.camera_btn.config(text="카메라 끄기", bg="#D0E8FF")
+        else:
+            self.camera_btn.config(text="카메라 켜기", bg="#F0F0F0")
+            self.doctor_canvas.delete("all")
+            self.doctor_canvas.create_text(213, 160, text="카메라 꺼짐",
+                                            fill="#AAAAAA", font=("맑은 고딕", 10))
+        if self.on_camera_toggle:
+            self.on_camera_toggle(self.camera_active)
+
     def _toggle_patient_mute(self):
         self.patient_muted = not self.patient_muted
         self.patient_mute_btn.config(text="음소거 해제" if self.patient_muted else "음소거")
@@ -339,6 +348,8 @@ class ServerGUI:
         self.stop_btn.config(state=tk.DISABLED)
         if self.on_session_stop:
             self.on_session_stop()
+        save_path = os.path.abspath("data/sessions")
+        messagebox.showinfo("세션 저장 완료", f"저장 위치:\n{save_path}")
 
     def update_patient_frame(self, frame: np.ndarray):
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -348,6 +359,8 @@ class ServerGUI:
         self.patient_canvas.image = photo
 
     def update_doctor_frame(self, frame: np.ndarray):
+        if not self.camera_active:
+            return
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (426, 320))
         photo = ImageTk.PhotoImage(Image.fromarray(img))

@@ -14,10 +14,10 @@ sock.bind((SERVER_IP, UDP_AUDIO_PORT))
 stream = sd.OutputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1, dtype=np.int16)
 stream.start()
 
-def receive_audio(patient_name: str = "환자"):
+def receive_audio(patient_name: str = "환자", gui=None):
     print(f"UDP 음성 대기 중 - 포트 {UDP_AUDIO_PORT}")
     buffer = b''
-    audio_buffer = b''  # 세션 음성 누적
+    audio_buffer = b''
 
     while True:
         try:
@@ -25,16 +25,21 @@ def receive_audio(patient_name: str = "환자"):
             buffer += data
             audio_buffer += data
 
-            # 버퍼에 충분히 쌓이면 재생
             if len(buffer) >= AUDIO_CHUNK_SIZE * 8:
                 audio = np.frombuffer(buffer, dtype=np.int16)
                 stream.write(audio)
+
+                # 음량 계산 (RMS → 0~100 스케일)
+                rms = int(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+                volume = min(int(rms / 300 * 100), 100)
+                if gui:
+                    gui.root.after(0, lambda v=volume: gui.update_patient_volume(v))
+
                 buffer = b''
-            # TODO: voice_analyzer.py 연동 (분석 버퍼에 누적)
+            # TODO: voice_analyzer.py 연동
         except OSError:
             break
 
-    # 세션 종료 시 음성 저장
     save_audio(patient_name, audio_buffer, AUDIO_SAMPLE_RATE)
     stream.stop()
     sock.close()
