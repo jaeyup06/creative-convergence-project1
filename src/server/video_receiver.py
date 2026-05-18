@@ -15,7 +15,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)  # 수신 버퍼 1MB
 sock.bind((SERVER_IP, UDP_VIDEO_PORT))
 
-def receive_video(patient_name: str = "환자"):
+def receive_video(patient_name: str = "환자", frame_callback=None):
     # 패킷 조립 버퍼 초기화 (5_20p 참고)
     s = [b'\xff' * PACKET_SIZE for x in range(PACKET_COUNT)]
     picture = b''
@@ -36,7 +36,10 @@ def receive_video(patient_name: str = "환자"):
             frame = np.frombuffer(picture, dtype=np.uint8)
             frame = frame.reshape(VIDEO_HEIGHT, VIDEO_WIDTH, 3)
             frames.append(frame.copy())
-            cv2.imshow("patient", frame)
+            if frame_callback:
+                frame_callback(frame.copy())
+            # 프레임 업데이트 시 창 중복으로 임시 주석 처리
+            # cv2.imshow("patient", frame) 
             picture = b''
             s = [b'\xff' * PACKET_SIZE for x in range(PACKET_COUNT)]
 
