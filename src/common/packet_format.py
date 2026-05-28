@@ -1,19 +1,15 @@
 # src/common/packet_format.py
-# 영상/음성 패킷 구조 정의
-
 import struct
 
-# 영상 패킷: [ 4byte 크기 | N byte JPEG ]
-def pack_video(frame_bytes):
-    return struct.pack('>I', len(frame_bytes)) + frame_bytes
+PKT_PATIENT_VIDEO = 0x01
+PKT_PATIENT_AUDIO = 0x02
+PKT_DOCTOR_VIDEO  = 0x03
+PKT_DOCTOR_AUDIO  = 0x04
 
-def unpack_video(data):
-    size = struct.unpack('>I', data[:4])[0]
-    return data[4:4+size]
+VIDEO_PACKET_COUNT = 20
+VIDEO_PACKET_SIZE  = 640 * 480 * 3 // VIDEO_PACKET_COUNT
 
-# 음성 패킷: [ N byte PCM ]
-def pack_audio(audio_bytes):
-    return audio_bytes
-
-def unpack_audio(data):
-    return data
+def pack_video(frame_bytes): return struct.pack('>I', len(frame_bytes)) + frame_bytes
+def unpack_video(data): size = struct.unpack('>I', data[:4])[0]; return data[4:4+size]
+def pack_audio(audio_bytes): return audio_bytes
+def unpack_audio(data): return data

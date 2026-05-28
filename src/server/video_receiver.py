@@ -1,55 +1,30 @@
 # src/server/video_receiver.py
-# UDP 영상 수신 및 출력
+# UDP 영상 수신 - Queue 기반
 
-import socket
+import queue
 import numpy as np
-import cv2
-from src.common.config import SERVER_IP, UDP_VIDEO_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
-from src.server.session_recorder import save_video
+from src.common.config import VIDEO_WIDTH, VIDEO_HEIGHT
+from src.common.packet_format import VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 
-# 패킷 1개당 크기 및 분할 수 (5_20p 참고)
-PACKET_SIZE = VIDEO_WIDTH * VIDEO_HEIGHT * 3 // 20
-PACKET_COUNT = 20
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)  # 수신 버퍼 1MB
-sock.bind((SERVER_IP, UDP_VIDEO_PORT))
+def receive_video(video_queue: queue.Queue, frame_callback=None):
+    s = [b'\xff' * VIDEO_PACKET_SIZE for _ in range(VIDEO_PACKET_COUNT)]
 
-def receive_video(patient_name: str = "환자", frame_callback=None):
-    # 패킷 조립 버퍼 초기화 (5_20p 참고)
-    s = [b'\xff' * PACKET_SIZE for x in range(PACKET_COUNT)]
-    picture = b''
-    frames = []  # 세션 영상 누적
-
+    print("영상 수신 대기 중...")
     while True:
-        data, addr = sock.recvfrom(PACKET_SIZE + 1)
-
-        # 첫 바이트 = 패킷 인덱스, 나머지 = 실제 데이터 (5_20p 참고)
-        s[data[0]] = data[1:PACKET_SIZE + 1]
-
-        # 마지막 패킷 수신 시 프레임 조립 (5_20p 참고)
-        if data[0] == PACKET_COUNT - 1:
-            for i in range(PACKET_COUNT):
-                picture += s[i]
-
-            # frombuffer로 프레임 복원, fromstring deprecated (5_16p 참고)
-            frame = np.frombuffer(picture, dtype=np.uint8)
-            frame = frame.reshape(VIDEO_HEIGHT, VIDEO_WIDTH, 3)
-            frames.append(frame.copy())
-            if frame_callback:
-                frame_callback(frame.copy())
-            # 프레임 업데이트 시 창 중복으로 임시 주석 처리
-            # cv2.imshow("patient", frame) 
-            picture = b''
-            s = [b'\xff' * PACKET_SIZE for x in range(PACKET_COUNT)]
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
-    # 세션 종료 시 영상 저장
-    save_video(patient_name, frames)
-    sock.close()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    receive_video()
+        try:
+            data = video_queue.get(timeout=1.0)
+            idx = data[1]
+            if idx == 0:
+                s = [b'\xff' * VIDEO_PACKET_SIZE for _ in range(VIDEO_PACKET_COUNT)]
+            s[idx] = data[2:VIDEO_PACKET_SIZE + 2]
+            if idx == VIDEO_PACKET_COUNT - 1:
+                picture = b''.join(s)
+                frame = np.frombuffer(picture, dtype=np.uint8)
+                frame = frame.reshape(VIDEO_HEIGHT, VIDEO_WIDTH, 3)
+                if frame_callback:
+                    frame_callback(frame.copy())
+        except queue.Empty:
+            continue
+        except OSError:
+            break
