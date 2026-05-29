@@ -3,42 +3,32 @@
 # face_asymmetry, pose_guide 오버레이 포함
 
 import socket
+import threading
 import cv2
 import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from src.common.config import SERVER_IP, UDP_VIDEO_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
+from src.common.config import SERVER_IP, UDP_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
+from src.common.packet_format import PKT_PATIENT_VIDEO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 from src.recognition.face_asymmetry import FaceAsymmetryAnalyzer
 from src.client.pose_guide import check_face_center, check_shoulder_level
 
-# 패킷 1개당 크기 및 분할 수 (5_21p 참고)
-PACKET_SIZE = VIDEO_WIDTH * VIDEO_HEIGHT * 3 // 20
-PACKET_COUNT = 20
-
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-cap = cv2.VideoCapture(0)
+sock.bind(('', 0))
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 
-# 분석 모듈 초기화
 analyzer = FaceAsymmetryAnalyzer()
-
-# 세션 모드: True = 자세 유도, False = 재활 측정
 pose_mode = True
 
 
 def apply_overlay(frame):
-    """
-    프레임에 오버레이 적용
-    - pose_mode=True : 자세 유도 가이드
-    - pose_mode=False: 안면 비대칭 측정
-    """
     global pose_mode
 
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
     if pose_mode:
-        # 자세 유도 모드
         if nose_x is not None:
             face_result = check_face_center(frame, nose_x)
             is_centered = face_result["중앙 정렬"]
@@ -64,7 +54,6 @@ def apply_overlay(frame):
         cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
-        # 재활 측정 모드
         frame, asymmetry = analyzer.analyze(frame)
         cv2.putText(frame, "MODE: Rehabilitation Session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
@@ -72,44 +61,48 @@ def apply_overlay(frame):
     return frame
 
 
-def send_video():
+def send_video(frame_callback=None, stop_event: threading.Event = None):
     global pose_mode
 
-    print(f"영상 송신 시작 - {SERVER_IP}:{UDP_VIDEO_PORT}")
-    print("B: 안면 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
+    cap = cv2.VideoCapture(0)
+    gui_mode = frame_callback is not None
+
+    if not gui_mode:
+        print(f"영상 송신 시작 - {SERVER_IP}:{UDP_PORT}")
+        print("B: 안면 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
 
     while True:
+        if stop_event and stop_event.is_set():
+            break
+
         ret, frame = cap.read()
         if not ret:
             break
 
         frame = cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT))
-
-        # 오버레이 적용
         frame = apply_overlay(frame)
 
-        # 로컬 미리보기
-        cv2.imshow("client preview", frame)
-        key = cv2.waitKey(1) & 0xFF
+        if gui_mode:
+            frame_callback(frame.copy())
+        else:
+            cv2.imshow("client preview", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('b'):
+                analyzer.calibrate(frame)
+            elif key == ord('r'):
+                pose_mode = False
+                print("[VideoSender] Session started")
 
-        if key == ord('q'):
-            break
-        elif key == ord('b'):
-            analyzer.calibrate(frame)
-        elif key == ord('r'):
-            pose_mode = False
-            print("[VideoSender] Session started")
-
-        # UDP 전송 (팀원 방식: 20패킷 분할)
-        d = frame.flatten()
-        s = d.tobytes()
-        for i in range(PACKET_COUNT):
-            packet = bytes([i]) + s[i * PACKET_SIZE:(i + 1) * PACKET_SIZE]
-            sock.sendto(packet, (SERVER_IP, UDP_VIDEO_PORT))
+        d = frame.flatten().tobytes()
+        for i in range(VIDEO_PACKET_COUNT):
+            packet = bytes([PKT_PATIENT_VIDEO, i]) + d[i * VIDEO_PACKET_SIZE:(i + 1) * VIDEO_PACKET_SIZE]
+            sock.sendto(packet, (SERVER_IP, UDP_PORT))
 
     cap.release()
-    sock.close()
-    cv2.destroyAllWindows()
+    if not gui_mode:
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
