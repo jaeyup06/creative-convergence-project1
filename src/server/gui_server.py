@@ -11,6 +11,7 @@ from PIL import Image, ImageTk
 
 PATIENTS_FILE = "data/sessions/patients.json"
 
+
 class ServerGUI:
     def __init__(self, root):
         self.root = root
@@ -21,7 +22,6 @@ class ServerGUI:
 
         self.current_patient = None
         self.session_active = False
-        self.patient_muted = False
         self.camera_active = False
         self.doctor_audio_active = False
         self.sentence_counter = 0
@@ -30,28 +30,33 @@ class ServerGUI:
         self.on_send_message = None
         self.on_session_start = None
         self.on_session_stop = None
-        self.on_mute_patient = None
         self.on_camera_toggle = None
         self.on_doctor_audio_toggle = None
 
         self._build_ui()
+
+    def _section(self, parent, title: str) -> tk.Frame:
+        outer = tk.Frame(parent, bg="#FFFFFF", bd=1, relief="solid", pady=6, padx=8)
+        tk.Label(outer, text=title, font=("맑은 고딕", 8), bg="#FFFFFF",
+                 fg="#888888").pack(anchor="w")
+        return outer
 
     def _build_ui(self):
         FONT = ("맑은 고딕", 10)
         FONT_BOLD = ("맑은 고딕", 11, "bold")
         FONT_SMALL = ("맑은 고딕", 9)
 
-        # ── 헤더 ──────────────────────────────────────────────
-        header = tk.Frame(self.root, bg="#FFFFFF", pady=10, padx=16)
-        header.pack(fill=tk.X, padx=12, pady=(12, 6))
+        # ── 헤더 (패딩 없음) ──
+        header = tk.Frame(self.root, bg="#FFFFFF", pady=8)
+        header.pack(fill=tk.X)
 
         tk.Label(header, text="안면 및 구음 재활 모니터링 — 의료진",
-                 font=FONT_BOLD, bg="#FFFFFF").pack(side=tk.LEFT)
+                 font=FONT_BOLD, bg="#FFFFFF", fg="#222222").pack(side=tk.LEFT, padx=12)
 
         self.status_label = tk.Label(header, text="환자 미연결",
                                      font=FONT, bg="#F0F0F0",
                                      fg="#888888", padx=10, pady=4)
-        self.status_label.pack(side=tk.RIGHT, padx=(0, 8))
+        self.status_label.pack(side=tk.RIGHT, padx=12)
 
         self.patient_btn = tk.Button(header, text="환자 선택",
                                      font=FONT, bg="#F0F0F0",
@@ -59,128 +64,116 @@ class ServerGUI:
                                      command=self._open_patient_popup)
         self.patient_btn.pack(side=tk.RIGHT, padx=(0, 4))
 
-        # ── 영상 영역 ──────────────────────────────────────────
+        # ── 영상 영역 ──
         video_frame = tk.Frame(self.root, bg="#F5F5F0")
         video_frame.pack(fill=tk.X, padx=12, pady=6)
 
-        # 환자 영상
-        patient_video_frame = tk.LabelFrame(video_frame, text="환자 영상",
-                                             font=FONT, bg="#FFFFFF",
-                                             padx=8, pady=8)
+        # 환자 영상 섹션
+        patient_video_frame = self._section(video_frame, "환자 영상")
         patient_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
 
         self.patient_canvas = tk.Canvas(patient_video_frame, width=640, height=480,
-                                         bg="#E8E8E8")
+                                        bg="#E8E8E8")
         self.patient_canvas.pack()
         self.patient_canvas.create_text(320, 240, text="환자 접속 대기 중",
-                                         fill="#AAAAAA", font=FONT)
+                                        fill="#AAAAAA", font=FONT)
 
         vol_frame1 = tk.Frame(patient_video_frame, bg="#FFFFFF")
         vol_frame1.pack(fill=tk.X, pady=(6, 0))
-
         tk.Label(vol_frame1, text="환자 음량", font=FONT_SMALL,
                  bg="#FFFFFF", fg="#888888").pack(anchor=tk.W)
         self.patient_vol_bar = ttk.Progressbar(vol_frame1, length=600,
-                                                mode="determinate", maximum=100)
+                                               mode="determinate", maximum=100)
         self.patient_vol_bar.pack(fill=tk.X, expand=True, pady=2)
 
         btn_frame1 = tk.Frame(patient_video_frame, bg="#FFFFFF")
         btn_frame1.pack(fill=tk.X, pady=(4, 0))
 
         self.shoulder_btn = tk.Button(btn_frame1, text="어깨 기준점 설정",
-                                       font=FONT_SMALL, relief=tk.FLAT,
-                                       bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
+                                      font=FONT_SMALL, relief=tk.FLAT,
+                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
         self.shoulder_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
 
         self.baseline_btn = tk.Button(btn_frame1, text="베이스라인 저장",
-                                       font=FONT_SMALL, relief=tk.FLAT,
-                                       bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
-        self.baseline_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+                                      font=FONT_SMALL, relief=tk.FLAT,
+                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
+        self.baseline_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-        self.patient_mute_btn = tk.Button(btn_frame1, text="환자 음소거",
-                                           font=FONT_SMALL, relief=tk.FLAT,
-                                           bg="#F0F0F0", padx=8, pady=4,
-                                           command=self._toggle_patient_mute)
-        self.patient_mute_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
-
-        # 내 화면
-        doctor_video_frame = tk.LabelFrame(video_frame, text="내 화면",
-                                            font=FONT, bg="#FFFFFF",
-                                            padx=8, pady=8)
+        # 내 화면 섹션
+        doctor_video_frame = self._section(video_frame, "내 화면")
         doctor_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(6, 0))
 
         self.doctor_canvas = tk.Canvas(doctor_video_frame, width=426, height=320,
-                                        bg="#E8E8E8")
+                                       bg="#E8E8E8")
         self.doctor_canvas.pack()
         self.doctor_canvas.create_text(213, 160, text="카메라 꺼짐",
-                                        fill="#AAAAAA", font=FONT)
+                                       fill="#AAAAAA", font=FONT)
 
         vol_frame2 = tk.Frame(doctor_video_frame, bg="#FFFFFF")
         vol_frame2.pack(fill=tk.X, pady=(6, 0))
-
         tk.Label(vol_frame2, text="내 음량", font=FONT_SMALL,
                  bg="#FFFFFF", fg="#888888").pack(anchor=tk.W)
         self.doctor_vol_bar = ttk.Progressbar(vol_frame2, length=300,
-                                               mode="determinate", maximum=100)
+                                              mode="determinate", maximum=100)
         self.doctor_vol_bar.pack(fill=tk.X, pady=2)
 
         cam_mic_frame = tk.Frame(doctor_video_frame, bg="#FFFFFF")
         cam_mic_frame.pack(fill=tk.X, pady=(4, 0))
 
         self.camera_btn = tk.Button(cam_mic_frame, text="카메라 켜기",
-                                     font=FONT_SMALL, relief=tk.FLAT,
-                                     bg="#F0F0F0", padx=8, pady=4,
-                                     command=self._toggle_camera)
+                                    font=FONT_SMALL, relief=tk.FLAT,
+                                    bg="#F0F0F0", padx=8, pady=4,
+                                    command=self._toggle_camera)
         self.camera_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
 
         self.mic_btn = tk.Button(cam_mic_frame, text="마이크 켜기",
-                                  font=FONT_SMALL, relief=tk.FLAT,
-                                  bg="#F0F0F0", padx=8, pady=4,
-                                  command=self._toggle_doctor_mic)
+                                 font=FONT_SMALL, relief=tk.FLAT,
+                                 bg="#F0F0F0", padx=8, pady=4,
+                                 command=self._toggle_doctor_mic)
         self.mic_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
         tk.Label(doctor_video_frame, text="회차별 재활 추이", font=FONT_SMALL,
                  bg="#FFFFFF", fg="#888888").pack(anchor=tk.W, pady=(8, 2))
         self.graph_canvas = tk.Canvas(doctor_video_frame, height=100, bg="#FFFFFF",
-                                       highlightthickness=0)
+                                      highlightthickness=0)
         self.graph_canvas.pack(fill=tk.X)
         self.graph_canvas.create_text(200, 50, text="환자 연결 후 표시됩니다",
-                                       fill="#AAAAAA", font=FONT_SMALL)
+                                      fill="#AAAAAA", font=FONT_SMALL)
 
-        # ── 문장 전송 + 분석 수치 ──────────────────────────────
+        # ── 문장 전송 + 분석 수치 ──
         middle_frame = tk.Frame(self.root, bg="#F5F5F0")
         middle_frame.pack(fill=tk.X, padx=12, pady=6)
 
-        msg_frame = tk.LabelFrame(middle_frame, text="재활 문장 전송",
-                                   font=FONT, bg="#FFFFFF", padx=8, pady=8)
+        msg_frame = self._section(middle_frame, "재활 문장 전송")
         msg_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
 
         tk.Label(msg_frame, text="/s 문장  →  발화 문장 전송    일반 텍스트  →  지시 사항 전송",
                  font=FONT_SMALL, bg="#FFFFFF", fg="#888888").pack(anchor=tk.W, pady=(0, 4))
 
         self.msg_entry = tk.Text(msg_frame, height=2, font=FONT,
-                                  state=tk.DISABLED, wrap=tk.WORD)
+                                 state=tk.DISABLED, wrap=tk.WORD)
         self.msg_entry.pack(fill=tk.X)
         self.msg_entry.bind("<Return>", self._on_enter_key)
 
         self.send_btn = tk.Button(msg_frame, text="전송  (Enter)",
-                                   font=FONT, relief=tk.FLAT,
-                                   bg="#F0F0F0", pady=5,
-                                   state=tk.DISABLED, command=self._send_message)
+                                  font=FONT, relief=tk.FLAT,
+                                  bg="#F0F0F0", pady=5,
+                                  state=tk.DISABLED, command=self._send_message)
         self.send_btn.pack(fill=tk.X, pady=(6, 0))
 
-        analysis_frame = tk.LabelFrame(middle_frame, text="분석 수치",
-                                        font=FONT, bg="#FFFFFF", padx=8, pady=8)
+        analysis_frame = self._section(middle_frame, "분석 수치")
         analysis_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(6, 0))
 
         self.metrics = {}
         labels = [("비대칭 지수", "asymmetry"), ("발음 정확도", "pronunciation"),
                   ("발화 속도", "speech_rate"), ("묵음 구간", "silence")]
 
-        for i, (label, key) in enumerate(labels):
-            cell = tk.Frame(analysis_frame, bg="#F5F5F0", padx=12, pady=8, width=90)
-            cell.grid(row=i//2, column=i%2, padx=4, pady=4)
-            cell.pack_propagate(False)
+        metrics_row = tk.Frame(analysis_frame, bg="#FFFFFF")
+        metrics_row.pack(fill=tk.X)
+
+        for label, key in labels:
+            cell = tk.Frame(metrics_row, bg="#F5F5F0", padx=12, pady=8)
+            cell.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=3)
             tk.Label(cell, text=label, font=FONT_SMALL,
                      bg="#F5F5F0", fg="#888888").pack()
             val = tk.Label(cell, text="—", font=("맑은 고딕", 16, "bold"),
@@ -188,23 +181,23 @@ class ServerGUI:
             val.pack()
             self.metrics[key] = val
 
-        # ── 세션 버튼 ──────────────────────────────────────────
+        # ── 세션 버튼 ──
         session_frame = tk.Frame(self.root, bg="#F5F5F0")
         session_frame.pack(fill=tk.X, padx=12, pady=(6, 12))
 
         self.start_btn = tk.Button(session_frame, text="재활 세션 시작",
-                                    font=FONT, relief=tk.FLAT,
-                                    bg="#F0F0F0", pady=8, state=tk.DISABLED,
-                                    command=self._start_session)
+                                   font=FONT, relief=tk.FLAT,
+                                   bg="#F0F0F0", pady=8, state=tk.DISABLED,
+                                   command=self._start_session)
         self.start_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 6))
 
         self.stop_btn = tk.Button(session_frame, text="세션 종료 및 저장",
-                                   font=FONT, relief=tk.FLAT,
-                                   bg="#F0F0F0", pady=8, state=tk.DISABLED,
-                                   command=self._stop_session)
+                                  font=FONT, relief=tk.FLAT,
+                                  bg="#F0F0F0", pady=8, state=tk.DISABLED,
+                                  command=self._stop_session)
         self.stop_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-    # ── 환자 팝업 ──────────────────────────────────────────────
+    # ── 환자 팝업 ──
     def _open_patient_popup(self):
         popup = tk.Toplevel(self.root)
         popup.title("환자 선택")
@@ -431,7 +424,7 @@ class ServerGUI:
             self.camera_btn.config(text="카메라 켜기", bg="#F0F0F0")
             self.doctor_canvas.delete("all")
             self.doctor_canvas.create_text(213, 160, text="카메라 꺼짐",
-                                            fill="#AAAAAA", font=("맑은 고딕", 10))
+                                           fill="#AAAAAA", font=("맑은 고딕", 10))
         if self.on_camera_toggle:
             self.on_camera_toggle(self.camera_active)
 
@@ -443,15 +436,6 @@ class ServerGUI:
             self.mic_btn.config(text="마이크 켜기", bg="#F0F0F0")
         if self.on_doctor_audio_toggle:
             self.on_doctor_audio_toggle(self.doctor_audio_active)
-
-    def _toggle_patient_mute(self):
-        self.patient_muted = not self.patient_muted
-        if self.patient_muted:
-            self.patient_mute_btn.config(text="음소거 해제", bg="#FFE0E0")
-        else:
-            self.patient_mute_btn.config(text="환자 음소거", bg="#F0F0F0")
-        if self.on_mute_patient:
-            self.on_mute_patient(self.patient_muted)
 
     def _on_enter_key(self, event):
         if not (event.state & 0x1):
@@ -499,7 +483,7 @@ class ServerGUI:
         self.patient_camera_active = False
         self.patient_canvas.delete("all")
         self.patient_canvas.create_text(320, 240, text="환자 카메라 꺼짐",
-                                         fill="#AAAAAA", font=("맑은 고딕", 10))
+                                        fill="#AAAAAA", font=("맑은 고딕", 10))
 
     def _on_patient_camera_on(self):
         self.patient_camera_active = True

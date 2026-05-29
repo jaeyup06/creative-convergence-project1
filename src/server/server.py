@@ -211,7 +211,7 @@ if __name__ == "__main__":
 
     def video_callback(frame):
         if gui:
-            gui.root.after(0, lambda: gui.update_patient_frame(frame))
+            gui.root.after(0, lambda f=frame: gui.update_patient_frame(f))
 
     threading.Thread(target=handle_tcp, daemon=True).start()
     threading.Thread(target=udp_dispatcher, daemon=True).start()
