@@ -204,6 +204,7 @@ class PatientGUI:
             self._video_thread = threading.Thread(
                 target=send_video,
                 kwargs={"frame_callback": self.update_patient_frame,
+                        "analysis_callback": self.update_analysis,
                         "stop_event": self._camera_stop},
                 daemon=True
             )
@@ -312,6 +313,37 @@ class PatientGUI:
 
     def update_doctor_volume(self, volume: int):
         self.root.after(0, lambda v=volume: self.doctor_vol_bar.configure(value=v))
+
+    def update_analysis(self, analysis: dict):
+        """
+        video_sender의 analysis_callback으로 호출됨 (영상 스레드에서 실행)
+        분석 결과를 자세 가이드 칸에 실시간 반영
+        """
+        face_ok = analysis.get("face_ok")
+        face_offset = analysis.get("face_offset")
+        shoulder_ok = analysis.get("shoulder_ok")
+        shoulder_tilt = analysis.get("shoulder_tilt")
+        asymmetry = analysis.get("asymmetry")
+        asym_diff = analysis.get("asym_diff")
+
+        self.root.after(0, lambda: self._apply_analysis(
+            face_ok, face_offset, shoulder_ok, shoulder_tilt, asymmetry, asym_diff))
+
+    def _apply_analysis(self, face_ok, face_offset, shoulder_ok,
+                        shoulder_tilt, asymmetry, asym_diff):
+        # 얼굴 중앙 정렬
+        if face_ok is not None:
+            self.face_var.set("양호 ✓" if face_ok else "기울음 !")
+            self.face_desc_var.set(f"편차 {face_offset:.1f}%")
+        # 어깨 수평
+        if shoulder_ok is not None:
+            self.shoulder_var.set("양호 ✓" if shoulder_ok else "기울음 !")
+            self.shoulder_desc_var.set(f"기울기 {shoulder_tilt:.1f}%")
+        # 비대칭 지수
+        if asymmetry is not None:
+            self.asym_var.set(f"{asymmetry:.2f}")
+            if asym_diff is not None:
+                self.asym_desc_var.set(f"기준 대비 {'+' if asym_diff >= 0 else ''}{asym_diff:.2f}")
 
     def update_pose_guide(self, face_ok: bool, face_offset: float,
                           shoulder_ok: bool, shoulder_tilt: float,

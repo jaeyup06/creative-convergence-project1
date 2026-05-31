@@ -23,16 +23,35 @@ pose_mode = True
 
 
 def apply_overlay(frame):
+    """
+    프레임에 오버레이 적용 + 분석 결과 반환
+    반환: (frame, analysis)
+      analysis = {
+        "face_ok": bool, "face_offset": float,
+        "shoulder_ok": bool, "shoulder_tilt": float,
+        "asymmetry": float, "asym_diff": float
+      }
+      값이 없으면 해당 키는 None
+    """
     global pose_mode
+
+    analysis = {
+        "face_ok": None, "face_offset": None,
+        "shoulder_ok": None, "shoulder_tilt": None,
+        "asymmetry": None, "asym_diff": None,
+    }
 
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
     if pose_mode:
+        # 자세 유도 모드
         if nose_x is not None:
             face_result = check_face_center(frame, nose_x)
             is_centered = face_result["중앙 정렬"]
             offset = face_result["편차"]
+            analysis["face_ok"] = is_centered
+            analysis["face_offset"] = offset
             color = (0, 255, 0) if is_centered else (0, 0, 255)
             cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -44,6 +63,8 @@ def apply_overlay(frame):
         if shoulder_result.get("설정됨"):
             is_level = shoulder_result["수평"]
             tilt = shoulder_result["기울기"]
+            analysis["shoulder_ok"] = is_level
+            analysis["shoulder_tilt"] = tilt
             color = (0, 255, 0) if is_level else (0, 0, 255)
             cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -54,14 +75,26 @@ def apply_overlay(frame):
         cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
-        frame, asymmetry = analyzer.analyze(frame)
+        # 재활 측정 모드
+        if landmarks is not None:
+            asymmetry = analyzer.calculate_asymmetry(landmarks)
+            analysis["asymmetry"] = asymmetry
+            if analyzer.baseline is not None:
+                analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
+        frame, _ = analyzer.analyze(frame)
         cv2.putText(frame, "MODE: Rehabilitation Session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    return frame
+    return frame, analysis
 
 
-def send_video(frame_callback=None, stop_event: threading.Event = None):
+def send_video(frame_callback=None, stop_event: threading.Event = None,
+               analysis_callback=None):
+    """
+    frame_callback: 오버레이 적용된 프레임 전달 (GUI 표시용)
+    analysis_callback: 분석 결과 dict 전달 (자세 가이드/수치 표시용)
+    stop_event: 종료 신호
+    """
     global pose_mode
 
     cap = cv2.VideoCapture(0)
@@ -80,10 +113,12 @@ def send_video(frame_callback=None, stop_event: threading.Event = None):
             break
 
         frame = cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT))
-        frame = apply_overlay(frame)
+        frame, analysis = apply_overlay(frame)
 
         if gui_mode:
             frame_callback(frame.copy())
+            if analysis_callback:
+                analysis_callback(analysis)
         else:
             cv2.imshow("client preview", frame)
             key = cv2.waitKey(1) & 0xFF
