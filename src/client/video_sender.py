@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.common.config import SERVER_IP, UDP_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_PATIENT_VIDEO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 from src.recognition.face_asymmetry import FaceAsymmetryAnalyzer
-from src.client.pose_guide import check_face_center, check_shoulder_level
+from src.client.pose_guide import check_face_center, check_shoulder_level, auto_set_baseline
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 0))
@@ -21,17 +21,27 @@ sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 analyzer = FaceAsymmetryAnalyzer()
 pose_mode = True
 
+# 의료진 버튼 → 다음 프레임에 처리할 요청 플래그
+_request_set_shoulder = False
+_request_save_baseline = False
+
+
+def request_set_shoulder():
+    """의료진이 '어깨 기준점 설정' 버튼 누르면 호출"""
+    global _request_set_shoulder
+    _request_set_shoulder = True
+
+
+def request_save_baseline():
+    """의료진이 '베이스라인 저장' 버튼 누르면 호출"""
+    global _request_save_baseline
+    _request_save_baseline = True
+
 
 def apply_overlay(frame):
     """
     프레임에 오버레이 적용 + 분석 결과 반환
     반환: (frame, analysis)
-      analysis = {
-        "face_ok": bool, "face_offset": float,
-        "shoulder_ok": bool, "shoulder_tilt": float,
-        "asymmetry": float, "asym_diff": float
-      }
-      값이 없으면 해당 키는 None
     """
     global pose_mode
 
@@ -95,7 +105,7 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
     analysis_callback: 분석 결과 dict 전달 (자세 가이드/수치 표시용)
     stop_event: 종료 신호
     """
-    global pose_mode
+    global pose_mode, _request_set_shoulder, _request_save_baseline
 
     cap = cv2.VideoCapture(0)
     gui_mode = frame_callback is not None
@@ -113,6 +123,15 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
             break
 
         frame = cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT))
+
+        # 의료진 버튼 요청 처리
+        if _request_set_shoulder:
+            auto_set_baseline(frame)
+            _request_set_shoulder = False
+        if _request_save_baseline:
+            analyzer.calibrate(frame)
+            _request_save_baseline = False
+
         frame, analysis = apply_overlay(frame)
 
         if gui_mode:
@@ -126,6 +145,8 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
                 break
             elif key == ord('b'):
                 analyzer.calibrate(frame)
+            elif key == ord('s'):
+                auto_set_baseline(frame)
             elif key == ord('r'):
                 pose_mode = False
                 print("[VideoSender] Session started")

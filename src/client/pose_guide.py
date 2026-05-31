@@ -12,12 +12,28 @@ baseline_right = None
 prev_gray = None
 prev_points = None
 
+
 def set_baseline(left: tuple, right: tuple):
     # 의료진이 클릭한 어깨 기준점 저장
-    global baseline_left, baseline_right
+    global baseline_left, baseline_right, prev_gray, prev_points
     baseline_left = left
     baseline_right = right
+    prev_gray = None
+    prev_points = None
     print(f"기준점 설정 완료 - 왼쪽: {left}, 오른쪽: {right}")
+
+
+def auto_set_baseline(frame: np.ndarray):
+    """
+    어깨 기준점을 화면 하단 좌우 지점으로 자동 설정
+    (클릭 없이 버튼 한 번으로 어깨 추적 시작)
+    """
+    h, w = frame.shape[:2]
+    # 화면 하단(70% 높이), 좌우 1/4 지점을 어깨로 추정
+    left = (w // 4, int(h * 0.7))
+    right = (w * 3 // 4, int(h * 0.7))
+    set_baseline(left, right)
+
 
 def check_shoulder_level(frame: np.ndarray) -> dict:
     # Optical Flow로 어깨 기준점 추적 후 수평 여부 계산
@@ -60,6 +76,7 @@ def check_shoulder_level(frame: np.ndarray) -> dict:
 
     return {"설정됨": True, "수평": True, "기울기": 0.0}
 
+
 def check_face_center(frame: np.ndarray, nose_x: int) -> dict:
     # 코 중심이 화면 중앙에 있는지 확인
     # nose_x: dlib 68포인트 30번(코) x 좌표
@@ -74,6 +91,7 @@ def check_face_center(frame: np.ndarray, nose_x: int) -> dict:
         "편차": offset_ratio,
         "방향": "왼쪽" if offset < 0 else "오른쪽"
     }
+
 
 def reset_baseline():
     # 기준점 초기화
