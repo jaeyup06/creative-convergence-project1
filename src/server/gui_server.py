@@ -32,6 +32,9 @@ class ServerGUI:
         self.on_session_stop = None
         self.on_camera_toggle = None
         self.on_doctor_audio_toggle = None
+        # OpenCV 관련 버튼 콜백 (어깨 기준점 / 베이스라인)
+        self.on_set_shoulder = None
+        self.on_save_baseline = None
 
         self._build_ui()
 
@@ -91,12 +94,14 @@ class ServerGUI:
 
         self.shoulder_btn = tk.Button(btn_frame1, text="어깨 기준점 설정",
                                       font=FONT_SMALL, relief=tk.FLAT,
-                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
+                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED,
+                                      command=self._set_shoulder)
         self.shoulder_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
 
         self.baseline_btn = tk.Button(btn_frame1, text="베이스라인 저장",
                                       font=FONT_SMALL, relief=tk.FLAT,
-                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED)
+                                      bg="#F0F0F0", padx=8, pady=4, state=tk.DISABLED,
+                                      command=self._save_baseline)
         self.baseline_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
         # 내 화면 섹션
@@ -196,6 +201,15 @@ class ServerGUI:
                                   bg="#F0F0F0", pady=8, state=tk.DISABLED,
                                   command=self._stop_session)
         self.stop_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+    # ── OpenCV 버튼 핸들러 ──
+    def _set_shoulder(self):
+        if self.on_set_shoulder:
+            self.on_set_shoulder()
+
+    def _save_baseline(self):
+        if self.on_save_baseline:
+            self.on_save_baseline()
 
     # ── 환자 팝업 ──
     def _open_patient_popup(self):

@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.common.config import SERVER_IP, UDP_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_PATIENT_VIDEO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 from src.recognition.face_asymmetry import FaceAsymmetryAnalyzer
-from src.client.pose_guide import check_face_center, check_shoulder_level
+from src.client.pose_guide import check_face_center, check_shoulder_level, auto_set_baseline
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 0))
@@ -21,18 +21,47 @@ sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 analyzer = FaceAsymmetryAnalyzer()
 pose_mode = True
 
+# 의료진 버튼 → 다음 프레임에 처리할 요청 플래그
+_request_set_shoulder = False
+_request_save_baseline = False
+
+
+def request_set_shoulder():
+    """의료진이 '어깨 기준점 설정' 버튼 누르면 호출"""
+    global _request_set_shoulder
+    _request_set_shoulder = True
+
+
+def request_save_baseline():
+    """의료진이 '베이스라인 저장' 버튼 누르면 호출"""
+    global _request_save_baseline
+    _request_save_baseline = True
+
 
 def apply_overlay(frame):
+    """
+    프레임에 오버레이 적용 + 분석 결과 반환
+    반환: (frame, analysis)
+    """
     global pose_mode
+
+    analysis = {
+        "face_ok": None, "face_offset": None,
+        "shoulder_ok": None, "shoulder_tilt": None,
+        "asymmetry": None, "asym_diff": None,
+    }
 
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
     if pose_mode:
+        # 자세 유도 모드
         if nose_x is not None:
             face_result = check_face_center(frame, nose_x)
             is_centered = face_result["중앙 정렬"]
             offset = face_result["편차"]
+            analysis["face_ok"] = is_centered
+            analysis["face_offset"] = offset
             color = (0, 255, 0) if is_centered else (0, 0, 255)
             cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -44,6 +73,8 @@ def apply_overlay(frame):
         if shoulder_result.get("설정됨"):
             is_level = shoulder_result["수평"]
             tilt = shoulder_result["기울기"]
+            analysis["shoulder_ok"] = is_level
+            analysis["shoulder_tilt"] = tilt
             color = (0, 255, 0) if is_level else (0, 0, 255)
             cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -54,15 +85,27 @@ def apply_overlay(frame):
         cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
-        frame, asymmetry = analyzer.analyze(frame)
+        # 재활 측정 모드
+        if landmarks is not None:
+            asymmetry = analyzer.calculate_asymmetry(landmarks)
+            analysis["asymmetry"] = asymmetry
+            if analyzer.baseline is not None:
+                analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
+        frame, _ = analyzer.analyze(frame)
         cv2.putText(frame, "MODE: Rehabilitation Session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    return frame
+    return frame, analysis
 
 
-def send_video(frame_callback=None, stop_event: threading.Event = None):
-    global pose_mode
+def send_video(frame_callback=None, stop_event: threading.Event = None,
+               analysis_callback=None):
+    """
+    frame_callback: 오버레이 적용된 프레임 전달 (GUI 표시용)
+    analysis_callback: 분석 결과 dict 전달 (자세 가이드/수치 표시용)
+    stop_event: 종료 신호
+    """
+    global pose_mode, _request_set_shoulder, _request_save_baseline
 
     cap = cv2.VideoCapture(0)
     gui_mode = frame_callback is not None
@@ -80,10 +123,21 @@ def send_video(frame_callback=None, stop_event: threading.Event = None):
             break
 
         frame = cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT))
-        frame = apply_overlay(frame)
+
+        # 의료진 버튼 요청 처리
+        if _request_set_shoulder:
+            auto_set_baseline(frame)
+            _request_set_shoulder = False
+        if _request_save_baseline:
+            analyzer.calibrate(frame)
+            _request_save_baseline = False
+
+        frame, analysis = apply_overlay(frame)
 
         if gui_mode:
             frame_callback(frame.copy())
+            if analysis_callback:
+                analysis_callback(analysis)
         else:
             cv2.imshow("client preview", frame)
             key = cv2.waitKey(1) & 0xFF
@@ -91,6 +145,8 @@ def send_video(frame_callback=None, stop_event: threading.Event = None):
                 break
             elif key == ord('b'):
                 analyzer.calibrate(frame)
+            elif key == ord('s'):
+                auto_set_baseline(frame)
             elif key == ord('r'):
                 pose_mode = False
                 print("[VideoSender] Session started")

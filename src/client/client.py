@@ -7,7 +7,7 @@ import numpy as np
 import sounddevice as sd
 from src.common.config import SERVER_IP, TCP_PORT, AUDIO_SAMPLE_RATE, AUDIO_CHUNK_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_DOCTOR_VIDEO, PKT_DOCTOR_AUDIO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
-from src.client.video_sender import send_video, sock as udp_sock
+from src.client.video_sender import send_video, sock as udp_sock, request_set_shoulder, request_save_baseline
 from src.client.audio_sender import send_audio
 
 # TCP 소켓
@@ -30,13 +30,37 @@ def handle_tcp():
             if not data:
                 break
             msg = data.decode().strip()
-            if on_message_callback:
+
+            # 어깨/베이스라인 CMD는 여기서 직접 처리
+            handled = _handle_command(msg)
+
+            # 나머지는 GUI 콜백으로 전달
+            if not handled and on_message_callback:
                 on_message_callback(msg)
         except OSError:
             break
 
     tcp_sock.close()
     print("TCP 연결 종료")
+
+
+def _handle_command(msg: str) -> bool:
+    """
+    어깨/베이스라인 관련 CMD 처리
+    처리했으면 True, 아니면 False 반환
+    """
+    handled = False
+    for line in msg.split("\n"):
+        line = line.strip()
+        if line == "CMD:SET_SHOULDER":
+            request_set_shoulder()
+            print("[Client] 어깨 기준점 설정 요청 수신")
+            handled = True
+        elif line == "CMD:SAVE_BASELINE":
+            request_save_baseline()
+            print("[Client] 베이스라인 저장 요청 수신")
+            handled = True
+    return handled
 
 
 def send_result(result: str):
