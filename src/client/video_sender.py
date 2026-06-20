@@ -61,9 +61,14 @@ def request_stop_session():
 def apply_overlay(frame, draw_text=True):
     """
     프레임에 오버레이 적용 + 분석 결과 반환
-    draw_text: True면 디버그용 텍스트를 프레임에 직접 그림.
-               GUI 모드에서는 자세 가이드 패널에 별도로 수치를 표시하므로 False로 둠
-               (환자 화면에 중복된 글자가 떠 있던 문제 수정)
+
+    - 비대칭 지수(analysis["asymmetry"])는 pose_mode(자세 가이드/재활 측정) 여부와
+      무관하게 매 프레임 항상 계산함. 세션을 시작하지 않아도 값이 끊기지 않음.
+    - draw_text=False(GUI 모드)일 때는 얼굴/어깨 디버그 텍스트와 dlib 랜드마크
+      시각화를 프레임에 굽지 않음 (환자 화면을 깨끗하게 유지). 수치는 GUI의
+      자세 가이드/분석 수치 패널에서 따로 표시됨.
+    - draw_text=True(독립 실행 cv2 미리보기 모드)일 때만 디버그용으로 시각화함.
+
     반환: (frame, analysis)
     """
     global pose_mode
@@ -76,6 +81,13 @@ def apply_overlay(frame, draw_text=True):
 
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
+
+    # 비대칭 지수: 세션 시작 여부와 무관하게 항상 계산
+    if landmarks is not None:
+        asymmetry = analyzer.calculate_asymmetry(landmarks)
+        analysis["asymmetry"] = asymmetry
+        if analyzer.baseline is not None:
+            analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
 
     if pose_mode:
         # 자세 유도 모드
@@ -111,14 +123,9 @@ def apply_overlay(frame, draw_text=True):
             cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
                         (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
-        # 재활 측정 모드
-        if landmarks is not None:
-            asymmetry = analyzer.calculate_asymmetry(landmarks)
-            analysis["asymmetry"] = asymmetry
-            if analyzer.baseline is not None:
-                analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
-        frame, _ = analyzer.analyze(frame)
+        # 재활 측정 모드 - dlib 랜드마크 시각화는 독립 실행(미리보기) 모드에서만 그림
         if draw_text:
+            frame, _ = analyzer.analyze(frame)
             cv2.putText(frame, "MODE: Rehabilitation Session",
                         (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
