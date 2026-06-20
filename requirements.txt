@@ -5,5 +5,6 @@ librosa
 dlib
 openpyxl
 requests
+beautifulsoup4
 numpy
 Pillow
