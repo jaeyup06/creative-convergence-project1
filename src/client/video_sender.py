@@ -23,29 +23,26 @@ pose_mode = True
 
 _request_set_shoulder = False
 _request_save_baseline = False
-_shoulder_coords = None  # (left, right) 의료진이 클릭한 좌표. 없으면 자동 추정으로 fallback
+_shoulder_coords = None
 
 
 def request_set_shoulder(left: tuple = None, right: tuple = None):
-    """
-    의료진이 '어깨 기준점 설정' 버튼 누르면 호출
-    left, right: 의료진이 환자 화면에서 클릭한 (x, y) 좌표.
-                 좌표가 없으면 다음 프레임에서 화면비 추정(auto_set_baseline)으로 fallback
-    """
     global _request_set_shoulder, _shoulder_coords
     _request_set_shoulder = True
     _shoulder_coords = (left, right) if (left is not None and right is not None) else None
 
 
 def request_save_baseline():
-    """의료진이 '베이스라인 저장' 버튼 누르면 호출"""
     global _request_save_baseline
     _request_save_baseline = True
 
 
-def apply_overlay(frame):
+def apply_overlay(frame, draw_text=True):
     """
     프레임에 오버레이 적용 + 분석 결과 반환
+    draw_text: True면 디버그용 텍스트를 프레임에 직접 그림.
+               GUI 모드에서는 자세 가이드 패널에 별도로 수치를 표시하므로 False로 둠
+               (환자 화면에 중복된 글자가 떠 있던 문제 수정)
     반환: (frame, analysis)
     """
     global pose_mode
@@ -66,10 +63,11 @@ def apply_overlay(frame):
             offset = face_result["편차"]
             analysis["face_ok"] = is_centered
             analysis["face_offset"] = offset
-            color = (0, 255, 0) if is_centered else (0, 0, 255)
-            cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        else:
+            if draw_text:
+                color = (0, 255, 0) if is_centered else (0, 0, 255)
+                cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        elif draw_text:
             cv2.putText(frame, "No face detected", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
@@ -79,15 +77,17 @@ def apply_overlay(frame):
             tilt = shoulder_result["기울기"]
             analysis["shoulder_ok"] = is_level
             analysis["shoulder_tilt"] = tilt
-            color = (0, 255, 0) if is_level else (0, 0, 255)
-            cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
-                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        else:
+            if draw_text:
+                color = (0, 255, 0) if is_level else (0, 0, 255)
+                cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
+                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        elif draw_text:
             cv2.putText(frame, "Shoulder: set_baseline() needed",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
-        cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
-                    (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+        if draw_text:
+            cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
+                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
         if landmarks is not None:
             asymmetry = analyzer.calculate_asymmetry(landmarks)
@@ -95,8 +95,9 @@ def apply_overlay(frame):
             if analyzer.baseline is not None:
                 analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
         frame, _ = analyzer.analyze(frame)
-        cv2.putText(frame, "MODE: Rehabilitation Session",
-                    (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        if draw_text:
+            cv2.putText(frame, "MODE: Rehabilitation Session",
+                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
     return frame, analysis
 
@@ -133,7 +134,7 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
             analyzer.calibrate(frame)
             _request_save_baseline = False
 
-        frame, analysis = apply_overlay(frame)
+        frame, analysis = apply_overlay(frame, draw_text=not gui_mode)
 
         if gui_mode:
             frame_callback(frame.copy())
