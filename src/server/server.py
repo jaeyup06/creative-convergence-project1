@@ -112,6 +112,15 @@ def handle_tcp():
             elif msg == "CMD:PATIENT_CAM_ON":
                 if gui:
                     gui.root.after(0, gui._on_patient_camera_on)
+            elif msg.startswith("METRIC:"):
+                parts = msg.split(":", 2)
+                if len(parts) == 3 and gui:
+                    key, value = parts[1], parts[2]
+                    try:
+                        v = float(value)
+                        gui.root.after(0, lambda k=key, val=v: gui.update_metrics({k: val}))
+                    except ValueError:
+                        pass
             else:
                 print(f"수신 데이터: {msg}")
         except OSError:

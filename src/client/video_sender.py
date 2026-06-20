@@ -54,6 +54,13 @@ def apply_overlay(frame):
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
+    # 비대칭 지수는 모드와 관계없이 항상 계산 (자세 가이드 단계에서도 표시 필요)
+    if landmarks is not None:
+        asymmetry = analyzer.calculate_asymmetry(landmarks)
+        analysis["asymmetry"] = asymmetry
+        if analyzer.baseline is not None:
+            analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
+
     if pose_mode:
         # 자세 유도 모드
         if nose_x is not None:
@@ -86,11 +93,6 @@ def apply_overlay(frame):
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
         # 재활 측정 모드
-        if landmarks is not None:
-            asymmetry = analyzer.calculate_asymmetry(landmarks)
-            analysis["asymmetry"] = asymmetry
-            if analyzer.baseline is not None:
-                analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
         frame, _ = analyzer.analyze(frame)
         cv2.putText(frame, "MODE: Rehabilitation Session",
                     (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
@@ -112,7 +114,7 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
 
     if not gui_mode:
         print(f"영상 송신 시작 - {SERVER_IP}:{UDP_PORT}")
-        print("B: 안면 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
+        print("B: 안면 baseline 저장 | S: 어깨 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
 
     while True:
         if stop_event and stop_event.is_set():
