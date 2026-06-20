@@ -82,7 +82,7 @@ def apply_overlay(frame, draw_text=True):
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
-    # 비대칭 지수: 세션 시작 여부와 무관하게 항상 계산
+    # 비대칭 지수는 모드와 관계없이 항상 계산 (자세 가이드 단계에서도 표시 필요)
     if landmarks is not None:
         asymmetry = analyzer.calculate_asymmetry(landmarks)
         analysis["asymmetry"] = asymmetry

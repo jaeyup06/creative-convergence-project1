@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import threading
+import time
 
 
 class PatientGUI:
@@ -29,6 +30,9 @@ class PatientGUI:
 
         self.on_patient_camera_on = None
         self.on_patient_camera_off = None
+        self.on_metric_update = None
+
+        self._last_metric_send = 0.0
 
         self._build_ui()
 
@@ -340,11 +344,11 @@ class PatientGUI:
                         shoulder_tilt, asymmetry, asym_diff, session_active=True):
         # 얼굴 중앙 정렬 - 자세 가이드 단계에서 항상 갱신
         if face_ok is not None:
-            self.face_var.set("양호 ✓" if face_ok else "기울음 !")
+            self.face_var.set("양호" if face_ok else "기울음")
             self.face_desc_var.set(f"편차 {face_offset:.1f}%")
         # 어깨 수평 - 자세 가이드 단계에서 항상 갱신
         if shoulder_ok is not None:
-            self.shoulder_var.set("양호 ✓" if shoulder_ok else "기울음 !")
+            self.shoulder_var.set("양호" if shoulder_ok else "기울음")
             self.shoulder_desc_var.set(f"기울기 {shoulder_tilt:.1f}%")
         # 비대칭 지수 - 세션이 시작된 경우에만 표시, 아니면 대기 상태로 표시
         if session_active and asymmetry is not None:
@@ -357,12 +361,17 @@ class PatientGUI:
             self.asym_var.set("—")
             self.asym_desc_var.set("세션 시작 후 표시")
 
+            now = time.time()
+            if self.on_metric_update and now - self._last_metric_send > 1.0:
+                self._last_metric_send = now
+                self.on_metric_update("asymmetry", asymmetry)
+
     def update_pose_guide(self, face_ok: bool, face_offset: float,
                           shoulder_ok: bool, shoulder_tilt: float,
                           asymmetry: float, asym_diff: float):
-        self.face_var.set("양호 ✓" if face_ok else "기울음 !")
+        self.face_var.set("양호" if face_ok else "기울음")
         self.face_desc_var.set(f"편차 {face_offset:.1f}%")
-        self.shoulder_var.set("양호 ✓" if shoulder_ok else "기울음 !")
+        self.shoulder_var.set("양호" if shoulder_ok else "기울음")
         self.shoulder_desc_var.set(f"기울기 {shoulder_tilt:.1f}%")
         self.asym_var.set(f"{asymmetry:.2f}")
         self.asym_desc_var.set(f"기준 대비 {'+' if asym_diff >= 0 else ''}{asym_diff:.2f}")
@@ -387,6 +396,7 @@ if __name__ == "__main__":
 
     gui.on_patient_camera_on = lambda: client_mod.send_result("CMD:PATIENT_CAM_ON")
     gui.on_patient_camera_off = lambda: client_mod.send_result("CMD:PATIENT_CAM_OFF")
+    gui.on_metric_update = lambda key, value: client_mod.send_result(f"METRIC:{key}:{value}")
 
     threading.Thread(target=client_mod.handle_tcp, daemon=True).start()
     threading.Thread(target=client_mod.receive_doctor_stream, daemon=True).start()

@@ -39,9 +39,8 @@ client_conn = None
 client_udp_addr = None
 gui: ServerGUI = None
 
-# 마지막으로 수신한 비대칭 지수 (세션 종료 시 엑셀 저장용으로 추후 활용)
-latest_asymmetry = None
-latest_asym_diff = None
+# 환자가 METRIC: 으로 보내준 최신 분석 수치들 (비대칭/발음/발화속도/묵음 등 공용)
+latest_metrics = {}
 
 # 제어 이벤트
 camera_event = threading.Event()
@@ -77,37 +76,6 @@ def udp_dispatcher():
                 audio_queue.put(data)
         except OSError:
             break
-
-def _handle_result_message(line: str) -> bool:
-    """
-    환자가 보낸 RESULT: 메시지 처리 (예: RESULT:ASYMMETRY:0.1234:0.0050)
-    처리했으면 True 반환
-    """
-    global latest_asymmetry, latest_asym_diff
-
-    if not line.startswith("RESULT:ASYMMETRY:"):
-        return False
-
-    parts = line.split(":")
-    try:
-        asymmetry = float(parts[2])
-    except (IndexError, ValueError):
-        return True  # RESULT: 메시지 자체는 처리한 걸로 보고 무시
-
-    asym_diff = None
-    if len(parts) > 3 and parts[3] != "":
-        try:
-            asym_diff = float(parts[3])
-        except ValueError:
-            asym_diff = None
-
-    latest_asymmetry = asymmetry
-    latest_asym_diff = asym_diff
-
-    if gui:
-        gui.root.after(0, lambda a=asymmetry: gui.update_metrics({"asymmetry": a}))
-
-    return True
 
 def handle_tcp():
     global client_conn, client_udp_addr, gui
@@ -147,15 +115,22 @@ def handle_tcp():
                 if not line:
                     continue
 
-                if _handle_result_message(line):
-                    continue
-
                 if line == "CMD:PATIENT_CAM_OFF":
                     if gui:
                         gui.root.after(0, gui._clear_patient_frame)
                 elif line == "CMD:PATIENT_CAM_ON":
                     if gui:
                         gui.root.after(0, gui._on_patient_camera_on)
+                elif line.startswith("METRIC:"):
+                    parts = line.split(":", 2)
+                    if len(parts) == 3 and gui:
+                        key, value = parts[1], parts[2]
+                        try:
+                            v = float(value)
+                            latest_metrics[key] = v
+                            gui.root.after(0, lambda k=key, val=v: gui.update_metrics({k: val}))
+                        except ValueError:
+                            pass
                 else:
                     print(f"수신 데이터: {line}")
         except OSError:
