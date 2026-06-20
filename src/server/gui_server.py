@@ -36,6 +36,10 @@ class ServerGUI:
         self.on_set_shoulder = None
         self.on_save_baseline = None
 
+        # 어깨 클릭 모드 상태
+        self._shoulder_click_mode = False
+        self._shoulder_click_points = []
+
         self._build_ui()
 
     def _section(self, parent, title: str) -> tk.Frame:
@@ -49,7 +53,6 @@ class ServerGUI:
         FONT_BOLD = ("맑은 고딕", 11, "bold")
         FONT_SMALL = ("맑은 고딕", 9)
 
-        # ── 헤더 (패딩 없음) ──
         header = tk.Frame(self.root, bg="#FFFFFF", pady=8)
         header.pack(fill=tk.X)
 
@@ -67,11 +70,9 @@ class ServerGUI:
                                      command=self._open_patient_popup)
         self.patient_btn.pack(side=tk.RIGHT, padx=(0, 4))
 
-        # ── 영상 영역 ──
         video_frame = tk.Frame(self.root, bg="#F5F5F0")
         video_frame.pack(fill=tk.X, padx=12, pady=6)
 
-        # 환자 영상 섹션
         patient_video_frame = self._section(video_frame, "환자 영상")
         patient_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
 
@@ -104,7 +105,6 @@ class ServerGUI:
                                       command=self._save_baseline)
         self.baseline_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-        # 내 화면 섹션
         doctor_video_frame = self._section(video_frame, "내 화면")
         doctor_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(6, 0))
 
@@ -145,7 +145,6 @@ class ServerGUI:
         self.graph_canvas.create_text(200, 50, text="환자 연결 후 표시됩니다",
                                       fill="#AAAAAA", font=FONT_SMALL)
 
-        # ── 문장 전송 + 분석 수치 ──
         middle_frame = tk.Frame(self.root, bg="#F5F5F0")
         middle_frame.pack(fill=tk.X, padx=12, pady=6)
 
@@ -186,7 +185,6 @@ class ServerGUI:
             val.pack()
             self.metrics[key] = val
 
-        # ── 세션 버튼 ──
         session_frame = tk.Frame(self.root, bg="#F5F5F0")
         session_frame.pack(fill=tk.X, padx=12, pady=(6, 12))
 
@@ -204,8 +202,25 @@ class ServerGUI:
 
     # ── OpenCV 버튼 핸들러 ──
     def _set_shoulder(self):
-        if self.on_set_shoulder:
-            self.on_set_shoulder()
+        if self._shoulder_click_mode:
+            return
+        self._shoulder_click_mode = True
+        self._shoulder_click_points = []
+        self.shoulder_btn.config(text="환자 화면에서 왼쪽 어깨를 클릭하세요", bg="#FFF3CD")
+        self.patient_canvas.bind("<Button-1>", self._on_shoulder_click)
+
+    def _on_shoulder_click(self, event):
+        self._shoulder_click_points.append((event.x, event.y))
+        if len(self._shoulder_click_points) == 1:
+            self.shoulder_btn.config(text="이번엔 오른쪽 어깨를 클릭하세요")
+        elif len(self._shoulder_click_points) == 2:
+            self.patient_canvas.unbind("<Button-1>")
+            self._shoulder_click_mode = False
+            self.shoulder_btn.config(text="어깨 기준점 설정", bg="#F0F0F0")
+            left, right = self._shoulder_click_points
+            self._shoulder_click_points = []
+            if self.on_set_shoulder:
+                self.on_set_shoulder(left, right)
 
     def _save_baseline(self):
         if self.on_save_baseline:

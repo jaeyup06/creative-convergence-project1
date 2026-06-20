@@ -20,26 +20,21 @@ from src.server.session_recorder import save_excel
 
 PATIENTS_FILE = "data/sessions/patients.json"
 
-# TCP 소켓
 tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 tcp_sock.bind((SERVER_IP, TCP_PORT))
 
-# UDP 소켓
 udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 udp_sock.bind((SERVER_IP, UDP_PORT))
 
-# 패킷 분류 Queue
 video_queue = queue.Queue()
 audio_queue = queue.Queue()
 
-# 전역 변수
 client_conn = None
 client_udp_addr = None
 gui: ServerGUI = None
 
-# 제어 이벤트
 camera_event = threading.Event()
 doctor_audio_event = threading.Event()
 patient_mute_event = threading.Event()
@@ -197,6 +192,16 @@ def on_mute_patient(muted: bool):
     else:
         patient_mute_event.clear()
 
+def on_set_shoulder(left: tuple, right: tuple):
+    """의료진이 환자 화면에서 어깨 두 지점을 클릭하면 좌표를 환자 클라이언트로 전송"""
+    send_message(f"CMD:SET_SHOULDER:{left[0]},{left[1]},{right[0]},{right[1]}")
+    print(f"[Server] 어깨 기준점 좌표 전송 - 왼쪽:{left} 오른쪽:{right}")
+
+def on_save_baseline():
+    """의료진이 '베이스라인 저장' 버튼을 누르면 환자 클라이언트에 안면 baseline 저장 요청"""
+    send_message("CMD:SAVE_BASELINE")
+    print("[Server] 베이스라인 저장 요청 전송")
+
 
 if __name__ == "__main__":
     root = tk.Tk()
@@ -208,6 +213,8 @@ if __name__ == "__main__":
     gui.on_camera_toggle = on_camera_toggle
     gui.on_doctor_audio_toggle = on_doctor_audio_toggle
     gui.on_mute_patient = on_mute_patient
+    gui.on_set_shoulder = on_set_shoulder
+    gui.on_save_baseline = on_save_baseline
 
     def video_callback(frame):
         if gui:

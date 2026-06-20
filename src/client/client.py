@@ -10,10 +10,8 @@ from src.common.packet_format import PKT_DOCTOR_VIDEO, PKT_DOCTOR_AUDIO, VIDEO_P
 from src.client.video_sender import send_video, sock as udp_sock, request_set_shoulder, request_save_baseline
 from src.client.audio_sender import send_audio
 
-# TCP 소켓
 tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-# 콜백
 doctor_frame_callback = None
 on_message_callback = None
 
@@ -31,10 +29,8 @@ def handle_tcp():
                 break
             msg = data.decode().strip()
 
-            # 어깨/베이스라인 CMD는 여기서 직접 처리
             handled = _handle_command(msg)
 
-            # 나머지는 GUI 콜백으로 전달
             if not handled and on_message_callback:
                 on_message_callback(msg)
         except OSError:
@@ -52,9 +48,19 @@ def _handle_command(msg: str) -> bool:
     handled = False
     for line in msg.split("\n"):
         line = line.strip()
-        if line == "CMD:SET_SHOULDER":
-            request_set_shoulder()
-            print("[Client] 어깨 기준점 설정 요청 수신")
+        if line.startswith("CMD:SET_SHOULDER"):
+            parts = line.split(":")
+            if len(parts) >= 3 and "," in parts[2]:
+                try:
+                    x1, y1, x2, y2 = map(int, parts[2].split(","))
+                    request_set_shoulder((x1, y1), (x2, y2))
+                    print(f"[Client] 어깨 기준점 좌표 수신 - 왼쪽:({x1},{y1}) 오른쪽:({x2},{y2})")
+                except ValueError:
+                    print(f"[Client] 어깨 좌표 파싱 실패: {line}")
+                    request_set_shoulder()
+            else:
+                request_set_shoulder()
+                print("[Client] 어깨 기준점 설정 요청 수신 (좌표 없음, 자동 추정)")
             handled = True
         elif line == "CMD:SAVE_BASELINE":
             request_save_baseline()
