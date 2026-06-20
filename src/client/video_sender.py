@@ -62,8 +62,7 @@ def apply_overlay(frame, draw_text=True):
     """
     프레임에 오버레이 적용 + 분석 결과 반환
     draw_text: True면 디버그용 텍스트를 프레임에 직접 그림.
-               GUI 모드에서는 자세 가이드 패널에 별도로 수치를 표시하므로 False로 둠
-               (환자 화면에 중복된 글자가 떠 있던 문제 수정)
+               False면 화면에 그 어떤 텍스트(cv2.putText)도 그리지 않음.
     반환: (frame, analysis)
     """
     global pose_mode
@@ -117,10 +116,11 @@ def apply_overlay(frame, draw_text=True):
             analysis["asymmetry"] = asymmetry
             if analyzer.baseline is not None:
                 analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
-        frame, _ = analyzer.analyze(frame)
-        if draw_text:
-            cv2.putText(frame, "MODE: Rehabilitation Session",
-                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            
+            # [수정] analyzer.analyze(frame)를 지우고, 랜드마크 점만 직접 찍음
+            # 주황색 글씨 출력 원천 차단
+            for point in landmarks:
+                cv2.circle(frame, (int(point[0]), int(point[1])), 2, (0, 255, 0), -1)
 
     return frame, analysis
 
