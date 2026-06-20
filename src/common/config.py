@@ -6,3 +6,7 @@ AUDIO_SAMPLE_RATE = 44100
 AUDIO_CHUNK_SIZE = 4096
 VIDEO_WIDTH = 640
 VIDEO_HEIGHT = 480
+
+# 자세 가이드 임계값
+FACE_CENTER_THRESHOLD = 18.0   # 얼굴 중앙 정렬 허용 편차(%) - 기존 10.0에서 완화
+SHOULDER_TILT_THRESHOLD = 5.0  # 어깨 수평 허용 기울기(%)

@@ -7,7 +7,11 @@ import numpy as np
 import sounddevice as sd
 from src.common.config import SERVER_IP, TCP_PORT, AUDIO_SAMPLE_RATE, AUDIO_CHUNK_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_DOCTOR_VIDEO, PKT_DOCTOR_AUDIO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
-from src.client.video_sender import send_video, sock as udp_sock, request_set_shoulder, request_save_baseline
+from src.client.video_sender import (
+    send_video, sock as udp_sock,
+    request_set_shoulder, request_save_baseline,
+    request_start_session, request_stop_session,
+)
 from src.client.audio_sender import send_audio
 
 # TCP 소켓
@@ -31,10 +35,8 @@ def handle_tcp():
                 break
             msg = data.decode().strip()
 
-            # 어깨/베이스라인 CMD는 여기서 직접 처리
             handled = _handle_command(msg)
 
-            # 나머지는 GUI 콜백으로 전달
             if not handled and on_message_callback:
                 on_message_callback(msg)
         except OSError:
@@ -46,25 +48,47 @@ def handle_tcp():
 
 def _handle_command(msg: str) -> bool:
     """
-    어깨/베이스라인 관련 CMD 처리
+    어깨/베이스라인/세션 관련 CMD 처리
     처리했으면 True, 아니면 False 반환
     """
     handled = False
     for line in msg.split("\n"):
         line = line.strip()
-        if line == "CMD:SET_SHOULDER":
-            request_set_shoulder()
-            print("[Client] 어깨 기준점 설정 요청 수신")
+        if line.startswith("CMD:SET_SHOULDER"):
+            parts = line.split(":")
+            if len(parts) >= 3 and "," in parts[2]:
+                try:
+                    x1, y1, x2, y2 = map(int, parts[2].split(","))
+                    request_set_shoulder((x1, y1), (x2, y2))
+                    print(f"[Client] 어깨 기준점 좌표 수신 - 왼쪽:({x1},{y1}) 오른쪽:({x2},{y2})")
+                except ValueError:
+                    print(f"[Client] 어깨 좌표 파싱 실패: {line}")
+                    request_set_shoulder()
+            else:
+                request_set_shoulder()
+                print("[Client] 어깨 기준점 설정 요청 수신 (좌표 없음, 자동 추정)")
             handled = True
         elif line == "CMD:SAVE_BASELINE":
             request_save_baseline()
             print("[Client] 베이스라인 저장 요청 수신")
             handled = True
+        elif line == "CMD:START_SESSION":
+            request_start_session()
+            print("[Client] 재활 세션 시작 요청 수신 (자세 가이드 모드 종료)")
+            handled = True
+        elif line == "CMD:STOP_SESSION":
+            request_stop_session()
+            print("[Client] 재활 세션 종료 요청 수신 (자세 가이드 모드로 복귀)")
+            handled = True
     return handled
 
 
 def send_result(result: str):
-    tcp_sock.sendall(result.encode())
+    """
+    분석 결과를 서버로 전송. 줄바꿈으로 구분해서, 여러 번 연속으로 보내도
+    서버 쪽에서 한 번에 뭉쳐 받았을 때 줄 단위로 안전하게 쪼갤 수 있게 함
+    """
+    tcp_sock.sendall((result + "\n").encode())
 
 
 def receive_doctor_stream():

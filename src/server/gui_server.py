@@ -7,10 +7,7 @@ import cv2
 import numpy as np
 import json
 import os
-import threading
 from PIL import Image, ImageTk
-
-from src.server.weather import get_naver_weather, get_naver_weekly_weather, get_outing_guide
 
 PATIENTS_FILE = "data/sessions/patients.json"
 
@@ -39,8 +36,11 @@ class ServerGUI:
         self.on_set_shoulder = None
         self.on_save_baseline = None
 
+        # 어깨 클릭 모드 상태
+        self._shoulder_click_mode = False
+        self._shoulder_click_points = []
+
         self._build_ui()
-        self._load_weather()
 
     def _section(self, parent, title: str) -> tk.Frame:
         outer = tk.Frame(parent, bg="#FFFFFF", bd=1, relief="solid", pady=6, padx=8)
@@ -53,7 +53,6 @@ class ServerGUI:
         FONT_BOLD = ("맑은 고딕", 11, "bold")
         FONT_SMALL = ("맑은 고딕", 9)
 
-        # ── 헤더 (패딩 없음) ──
         header = tk.Frame(self.root, bg="#FFFFFF", pady=8)
         header.pack(fill=tk.X)
 
@@ -71,11 +70,9 @@ class ServerGUI:
                                      command=self._open_patient_popup)
         self.patient_btn.pack(side=tk.RIGHT, padx=(0, 4))
 
-        # ── 영상 영역 ──
         video_frame = tk.Frame(self.root, bg="#F5F5F0")
         video_frame.pack(fill=tk.X, padx=12, pady=6)
 
-        # 환자 영상 섹션
         patient_video_frame = self._section(video_frame, "환자 영상")
         patient_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
 
@@ -108,7 +105,6 @@ class ServerGUI:
                                       command=self._save_baseline)
         self.baseline_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-        # 내 화면 섹션
         doctor_video_frame = self._section(video_frame, "내 화면")
         doctor_video_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(6, 0))
 
@@ -141,38 +137,14 @@ class ServerGUI:
                                  command=self._toggle_doctor_mic)
         self.mic_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-        # ── 오늘의 날씨 (네이버 날씨 스크래핑) ──
-        weather_frame = tk.Frame(doctor_video_frame, bg="#FFFFFF")
-        weather_frame.pack(fill=tk.X, pady=(8, 0))
+        tk.Label(doctor_video_frame, text="회차별 재활 추이", font=FONT_SMALL,
+                 bg="#FFFFFF", fg="#888888").pack(anchor=tk.W, pady=(8, 2))
+        self.graph_canvas = tk.Canvas(doctor_video_frame, height=100, bg="#FFFFFF",
+                                      highlightthickness=0)
+        self.graph_canvas.pack(fill=tk.X)
+        self.graph_canvas.create_text(200, 50, text="환자 연결 후 표시됩니다",
+                                      fill="#AAAAAA", font=FONT_SMALL)
 
-        weather_header = tk.Frame(weather_frame, bg="#FFFFFF")
-        weather_header.pack(fill=tk.X)
-        tk.Label(weather_header, text="오늘의 날씨", font=FONT_SMALL,
-                 bg="#FFFFFF", fg="#888888").pack(side=tk.LEFT)
-        tk.Button(weather_header, text="주간 날씨 ≫", font=("맑은 고딕", 8),
-                  relief=tk.FLAT, bg="#F0F0F0", padx=6, pady=2,
-                  command=self._open_weekly_weather).pack(side=tk.RIGHT)
-
-        self.weather_temp_var = tk.StringVar(value="—")
-        self.weather_desc_var = tk.StringVar(value="날씨 정보를 불러오는 중...")
-        self.weather_guide_var = tk.StringVar(value="")
-
-        weather_box = tk.Frame(weather_frame, bg="#F5F5F0", padx=10, pady=8)
-        weather_box.pack(fill=tk.X, pady=(2, 0))
-
-        tk.Label(weather_box, textvariable=self.weather_temp_var,
-                 font=("맑은 고딕", 16, "bold"), bg="#F5F5F0", fg="#222222").pack(anchor=tk.W)
-        tk.Label(weather_box, textvariable=self.weather_desc_var,
-                 font=FONT_SMALL, bg="#F5F5F0", fg="#888888").pack(anchor=tk.W)
-        tk.Label(weather_box, textvariable=self.weather_guide_var,
-                 font=FONT_SMALL, bg="#F5F5F0", fg="#CC3333",
-                 wraplength=380, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
-
-        tk.Button(weather_frame, text="날씨 새로고침", font=FONT_SMALL, relief=tk.FLAT,
-                  bg="#F0F0F0", padx=8, pady=4,
-                  command=self._load_weather).pack(fill=tk.X, pady=(4, 0))
-
-        # ── 문장 전송 + 분석 수치 ──
         middle_frame = tk.Frame(self.root, bg="#F5F5F0")
         middle_frame.pack(fill=tk.X, padx=12, pady=6)
 
@@ -213,7 +185,6 @@ class ServerGUI:
             val.pack()
             self.metrics[key] = val
 
-        # ── 세션 버튼 ──
         session_frame = tk.Frame(self.root, bg="#F5F5F0")
         session_frame.pack(fill=tk.X, padx=12, pady=(6, 12))
 
@@ -229,70 +200,27 @@ class ServerGUI:
                                   command=self._stop_session)
         self.stop_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-    # ── 날씨 ──
-    def _load_weather(self):
-        threading.Thread(target=self._fetch_weather, daemon=True).start()
-
-    def _fetch_weather(self):
-        result = get_naver_weather()
-        self.root.after(0, lambda: self._apply_weather(result))
-
-    def _apply_weather(self, result: dict):
-        temp = result.get("temperature", "-")
-        desc = result.get("description", "-")
-        self.weather_temp_var.set(f"{temp}°C" if temp != "-" else "—")
-        self.weather_desc_var.set(desc)
-        self.weather_guide_var.set(get_outing_guide(temp))
-
-    def _open_weekly_weather(self):
-        popup = tk.Toplevel(self.root)
-        popup.title("주간 날씨")
-        popup.geometry("300x420")
-        popup.configure(bg="#FFFFFF")
-        popup.resizable(False, False)
-
-        tk.Label(popup, text="주간 날씨", font=("맑은 고딕", 11, "bold"),
-                 bg="#FFFFFF").pack(pady=(12, 8))
-
-        list_frame = tk.Frame(popup, bg="#FFFFFF")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=12)
-
-        loading_label = tk.Label(list_frame, text="불러오는 중...", font=("맑은 고딕", 9),
-                                 bg="#FFFFFF", fg="#AAAAAA")
-        loading_label.pack(pady=20)
-
-        def fetch():
-            data = get_naver_weekly_weather()
-            self.root.after(0, lambda: render(data))
-
-        def render(data):
-            loading_label.destroy()
-            if not data:
-                tk.Label(list_frame, text="주간 날씨 정보를 불러올 수 없습니다",
-                         font=("맑은 고딕", 9), bg="#FFFFFF", fg="#AAAAAA",
-                         wraplength=240).pack(pady=20)
-                return
-            for day in data:
-                row = tk.Frame(list_frame, bg="#FFFFFF")
-                row.pack(fill=tk.X, pady=4)
-
-                top_row = tk.Frame(row, bg="#FFFFFF")
-                top_row.pack(fill=tk.X)
-                tk.Label(top_row, text=day["date"], font=("맑은 고딕", 9),
-                         bg="#FFFFFF", fg="#222222", width=10, anchor=tk.W).pack(side=tk.LEFT)
-                tk.Label(top_row, text=f"{day['temp_min']}° / {day['temp_max']}°",
-                         font=("맑은 고딕", 9, "bold"), bg="#FFFFFF", fg="#444444").pack(side=tk.LEFT)
-
-                tk.Label(row, text=day.get("condition", "-"), font=("맑은 고딕", 8),
-                         bg="#FFFFFF", fg="#888888", anchor=tk.W,
-                         wraplength=240, justify=tk.LEFT).pack(fill=tk.X, padx=(10, 0))
-
-        threading.Thread(target=fetch, daemon=True).start()
-
     # ── OpenCV 버튼 핸들러 ──
     def _set_shoulder(self):
-        if self.on_set_shoulder:
-            self.on_set_shoulder()
+        if self._shoulder_click_mode:
+            return
+        self._shoulder_click_mode = True
+        self._shoulder_click_points = []
+        self.shoulder_btn.config(text="환자 화면에서 왼쪽 어깨를 클릭하세요", bg="#FFF3CD")
+        self.patient_canvas.bind("<Button-1>", self._on_shoulder_click)
+
+    def _on_shoulder_click(self, event):
+        self._shoulder_click_points.append((event.x, event.y))
+        if len(self._shoulder_click_points) == 1:
+            self.shoulder_btn.config(text="이번엔 오른쪽 어깨를 클릭하세요")
+        elif len(self._shoulder_click_points) == 2:
+            self.patient_canvas.unbind("<Button-1>")
+            self._shoulder_click_mode = False
+            self.shoulder_btn.config(text="어깨 기준점 설정", bg="#F0F0F0")
+            left, right = self._shoulder_click_points
+            self._shoulder_click_points = []
+            if self.on_set_shoulder:
+                self.on_set_shoulder(left, right)
 
     def _save_baseline(self):
         if self.on_save_baseline:

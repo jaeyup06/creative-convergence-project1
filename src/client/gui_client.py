@@ -7,7 +7,6 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import threading
-import time
 
 
 class PatientGUI:
@@ -30,9 +29,6 @@ class PatientGUI:
 
         self.on_patient_camera_on = None
         self.on_patient_camera_off = None
-        self.on_metric_update = None
-
-        self._last_metric_send = 0.0
 
         self._build_ui()
 
@@ -41,7 +37,6 @@ class PatientGUI:
         FONT_BOLD = ("맑은 고딕", 11, "bold")
         FONT_SMALL = ("맑은 고딕", 9)
 
-        # 헤더
         header = tk.Frame(self.root, bg="#FFFFFF", pady=8)
         header.pack(fill="x")
         tk.Label(header, text="안면 및 구음 재활 모니터링 — 환자",
@@ -51,7 +46,6 @@ class PatientGUI:
                                      padx=10, pady=3)
         self.status_label.pack(side="right", padx=12)
 
-        # 재활 문장
         sent_frame = self._section(self.root, "재활 문장")
         sent_frame.pack(fill="x", padx=12, pady=(6, 0))
         self.sentence_var = tk.StringVar(value="세션 대기 중...")
@@ -60,11 +54,9 @@ class PatientGUI:
                  fg="#222222", wraplength=1100, justify="center", pady=18
                  ).pack(fill="x", padx=2, pady=2)
 
-        # ── 영상 행 ──
         video_frame = tk.Frame(self.root, bg="#F5F5F0")
         video_frame.pack(fill="x", padx=12, pady=6)
 
-        # ── 내 화면 (왼쪽, 큰 패널) ──
         my_sec = self._section(video_frame, "내 화면")
         my_sec.pack(side="left", fill="both", expand=True, padx=(0, 6))
 
@@ -99,11 +91,9 @@ class PatientGUI:
                                  command=self._toggle_audio)
         self.mic_btn.pack(side="left", fill="x", expand=True)
 
-        # ── 의료진 화면 (오른쪽, 고정 크기 패널) ──
         doc_sec = self._section(video_frame, "의료진 화면")
         doc_sec.pack(side="left", fill="y")
 
-        # side="bottom" 스택 순서 (아래→위): chat → 지시사항 → 음량 → 카메라
         chat_wrap = tk.Frame(doc_sec, bg="#CCCCCC", bd=1)
         chat_wrap.pack(side="bottom", fill="x", pady=(0, 2))
         chat_scroll = tk.Scrollbar(chat_wrap)
@@ -127,7 +117,6 @@ class PatientGUI:
                                                mode="determinate", maximum=100)
         self.doctor_vol_bar.pack(fill="x", pady=2)
 
-        # 카메라: 426×320 고정 (서버 GUI 동일 크기)
         doctor_holder = tk.Frame(doc_sec, width=426, height=320, bg="#E0E0E0")
         doctor_holder.pack(pady=(2, 4))
         doctor_holder.pack_propagate(False)
@@ -136,14 +125,12 @@ class PatientGUI:
                                       font=FONT_SMALL)
         self.doctor_canvas.pack(fill="both", expand=True)
 
-        # ── 하단 행: 자세 가이드 | 분석 수치 (6:4 비율) ──
         bottom_frame = tk.Frame(self.root, bg="#F5F5F0")
         bottom_frame.pack(fill="x", padx=12, pady=(0, 12))
         bottom_frame.columnconfigure(0, weight=6)
         bottom_frame.columnconfigure(1, weight=4)
         bottom_frame.rowconfigure(0, weight=1)
 
-        # 자세 가이드
         self.face_var = tk.StringVar(value="—")
         self.face_desc_var = tk.StringVar(value="")
         self.shoulder_var = tk.StringVar(value="—")
@@ -161,7 +148,6 @@ class PatientGUI:
         self._guide_item(guide_row, "어깨 수평", self.shoulder_var, self.shoulder_desc_var)
         self._guide_item(guide_row, "비대칭 지수", self.asym_var, self.asym_desc_var)
 
-        # 분석 수치
         self.accuracy_var = tk.StringVar(value="—")
         self.speed_var = tk.StringVar(value="—")
         self.silence_var = tk.StringVar(value="—")
@@ -321,7 +307,7 @@ class PatientGUI:
     def update_analysis(self, analysis: dict):
         """
         video_sender의 analysis_callback으로 호출됨 (영상 스레드에서 실행)
-        분석 결과를 자세 가이드 칸에 실시간 반영
+        분석 결과를 자세 가이드 칸에 실시간 반영 + 비대칭 지수는 서버로도 전송
         """
         face_ok = analysis.get("face_ok")
         face_offset = analysis.get("face_offset")
@@ -333,33 +319,38 @@ class PatientGUI:
         self.root.after(0, lambda: self._apply_analysis(
             face_ok, face_offset, shoulder_ok, shoulder_tilt, asymmetry, asym_diff))
 
+        self._send_analysis_result(asymmetry, asym_diff)
+
+    def _send_analysis_result(self, asymmetry, asym_diff):
+        """비대칭 지수를 의료진 서버로 TCP 전송 (RESULT:ASYMMETRY:값:편차)"""
+        if asymmetry is None:
+            return
+        from src.client.client import send_result
+        diff_str = f"{asym_diff:.4f}" if asym_diff is not None else ""
+        try:
+            send_result(f"RESULT:ASYMMETRY:{asymmetry:.4f}:{diff_str}")
+        except OSError:
+            pass
+
     def _apply_analysis(self, face_ok, face_offset, shoulder_ok,
                         shoulder_tilt, asymmetry, asym_diff):
-        # 얼굴 중앙 정렬
         if face_ok is not None:
-            self.face_var.set("양호" if face_ok else "기울음")
+            self.face_var.set("양호 ✓" if face_ok else "기울음 !")
             self.face_desc_var.set(f"편차 {face_offset:.1f}%")
-        # 어깨 수평
         if shoulder_ok is not None:
-            self.shoulder_var.set("양호" if shoulder_ok else "기울음")
+            self.shoulder_var.set("양호 ✓" if shoulder_ok else "기울음 !")
             self.shoulder_desc_var.set(f"기울기 {shoulder_tilt:.1f}%")
-        # 비대칭 지수
         if asymmetry is not None:
             self.asym_var.set(f"{asymmetry:.2f}")
             if asym_diff is not None:
                 self.asym_desc_var.set(f"기준 대비 {'+' if asym_diff >= 0 else ''}{asym_diff:.2f}")
 
-            now = time.time()
-            if self.on_metric_update and now - self._last_metric_send > 1.0:
-                self._last_metric_send = now
-                self.on_metric_update("asymmetry", asymmetry)
-
     def update_pose_guide(self, face_ok: bool, face_offset: float,
                           shoulder_ok: bool, shoulder_tilt: float,
                           asymmetry: float, asym_diff: float):
-        self.face_var.set("양호" if face_ok else "기울음")
+        self.face_var.set("양호 ✓" if face_ok else "기울음 !")
         self.face_desc_var.set(f"편차 {face_offset:.1f}%")
-        self.shoulder_var.set("양호" if shoulder_ok else "기울음")
+        self.shoulder_var.set("양호 ✓" if shoulder_ok else "기울음 !")
         self.shoulder_desc_var.set(f"기울기 {shoulder_tilt:.1f}%")
         self.asym_var.set(f"{asymmetry:.2f}")
         self.asym_desc_var.set(f"기준 대비 {'+' if asym_diff >= 0 else ''}{asym_diff:.2f}")
@@ -384,7 +375,6 @@ if __name__ == "__main__":
 
     gui.on_patient_camera_on = lambda: client_mod.send_result("CMD:PATIENT_CAM_ON")
     gui.on_patient_camera_off = lambda: client_mod.send_result("CMD:PATIENT_CAM_OFF")
-    gui.on_metric_update = lambda key, value: client_mod.send_result(f"METRIC:{key}:{value}")
 
     threading.Thread(target=client_mod.handle_tcp, daemon=True).start()
     threading.Thread(target=client_mod.receive_doctor_stream, daemon=True).start()

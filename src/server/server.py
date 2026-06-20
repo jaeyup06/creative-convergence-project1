@@ -39,6 +39,10 @@ client_conn = None
 client_udp_addr = None
 gui: ServerGUI = None
 
+# 마지막으로 수신한 비대칭 지수 (세션 종료 시 엑셀 저장용으로 추후 활용)
+latest_asymmetry = None
+latest_asym_diff = None
+
 # 제어 이벤트
 camera_event = threading.Event()
 doctor_audio_event = threading.Event()
@@ -74,6 +78,37 @@ def udp_dispatcher():
         except OSError:
             break
 
+def _handle_result_message(line: str) -> bool:
+    """
+    환자가 보낸 RESULT: 메시지 처리 (예: RESULT:ASYMMETRY:0.1234:0.0050)
+    처리했으면 True 반환
+    """
+    global latest_asymmetry, latest_asym_diff
+
+    if not line.startswith("RESULT:ASYMMETRY:"):
+        return False
+
+    parts = line.split(":")
+    try:
+        asymmetry = float(parts[2])
+    except (IndexError, ValueError):
+        return True  # RESULT: 메시지 자체는 처리한 걸로 보고 무시
+
+    asym_diff = None
+    if len(parts) > 3 and parts[3] != "":
+        try:
+            asym_diff = float(parts[3])
+        except ValueError:
+            asym_diff = None
+
+    latest_asymmetry = asymmetry
+    latest_asym_diff = asym_diff
+
+    if gui:
+        gui.root.after(0, lambda a=asymmetry: gui.update_metrics({"asymmetry": a}))
+
+    return True
+
 def handle_tcp():
     global client_conn, client_udp_addr, gui
     tcp_sock.listen(1)
@@ -105,24 +140,24 @@ def handle_tcp():
             data = conn.recv(1024)
             if not data:
                 break
-            msg = data.decode().strip()
-            if msg == "CMD:PATIENT_CAM_OFF":
-                if gui:
-                    gui.root.after(0, gui._clear_patient_frame)
-            elif msg == "CMD:PATIENT_CAM_ON":
-                if gui:
-                    gui.root.after(0, gui._on_patient_camera_on)
-            elif msg.startswith("METRIC:"):
-                parts = msg.split(":", 2)
-                if len(parts) == 3 and gui:
-                    key, value = parts[1], parts[2]
-                    try:
-                        v = float(value)
-                        gui.root.after(0, lambda k=key, val=v: gui.update_metrics({k: val}))
-                    except ValueError:
-                        pass
-            else:
-                print(f"수신 데이터: {msg}")
+            raw = data.decode().strip()
+
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+
+                if _handle_result_message(line):
+                    continue
+
+                if line == "CMD:PATIENT_CAM_OFF":
+                    if gui:
+                        gui.root.after(0, gui._clear_patient_frame)
+                elif line == "CMD:PATIENT_CAM_ON":
+                    if gui:
+                        gui.root.after(0, gui._on_patient_camera_on)
+                else:
+                    print(f"수신 데이터: {line}")
         except OSError:
             break
 
@@ -179,12 +214,14 @@ def on_session_start():
     print("세션 시작")
     if gui and gui.current_patient:
         gui.session_active = True
+        send_message("CMD:START_SESSION")
 
 def on_session_stop():
     print("세션 종료 및 저장")
     if gui and gui.current_patient:
         name = gui.current_patient["name"]
         save_excel(name, {})
+        send_message("CMD:STOP_SESSION")
 
 def on_camera_toggle(active: bool):
     if active:
@@ -206,6 +243,16 @@ def on_mute_patient(muted: bool):
     else:
         patient_mute_event.clear()
 
+def on_set_shoulder(left: tuple, right: tuple):
+    """의료진이 환자 화면에서 어깨 두 지점을 클릭하면 좌표를 환자 클라이언트로 전송"""
+    send_message(f"CMD:SET_SHOULDER:{left[0]},{left[1]},{right[0]},{right[1]}")
+    print(f"[Server] 어깨 기준점 좌표 전송 - 왼쪽:{left} 오른쪽:{right}")
+
+def on_save_baseline():
+    """의료진이 '베이스라인 저장' 버튼을 누르면 환자 클라이언트에 안면 baseline 저장 요청"""
+    send_message("CMD:SAVE_BASELINE")
+    print("[Server] 베이스라인 저장 요청 전송")
+
 
 if __name__ == "__main__":
     root = tk.Tk()
@@ -217,6 +264,8 @@ if __name__ == "__main__":
     gui.on_camera_toggle = on_camera_toggle
     gui.on_doctor_audio_toggle = on_doctor_audio_toggle
     gui.on_mute_patient = on_mute_patient
+    gui.on_set_shoulder = on_set_shoulder
+    gui.on_save_baseline = on_save_baseline
 
     def video_callback(frame):
         if gui:

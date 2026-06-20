@@ -12,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.common.config import SERVER_IP, UDP_PORT, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_PATIENT_VIDEO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 from src.recognition.face_asymmetry import FaceAsymmetryAnalyzer
-from src.client.pose_guide import check_face_center, check_shoulder_level, auto_set_baseline
+from src.client.pose_guide import check_face_center, check_shoulder_level, auto_set_baseline, set_baseline
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('', 0))
@@ -24,12 +24,20 @@ pose_mode = True
 # 의료진 버튼 → 다음 프레임에 처리할 요청 플래그
 _request_set_shoulder = False
 _request_save_baseline = False
+_request_start_session = False
+_request_stop_session = False
+_shoulder_coords = None  # (left, right) 의료진이 클릭한 좌표. 없으면 자동 추정으로 fallback
 
 
-def request_set_shoulder():
-    """의료진이 '어깨 기준점 설정' 버튼 누르면 호출"""
-    global _request_set_shoulder
+def request_set_shoulder(left: tuple = None, right: tuple = None):
+    """
+    의료진이 '어깨 기준점 설정' 버튼 누르면 호출
+    left, right: 의료진이 환자 화면에서 클릭한 (x, y) 좌표.
+                 좌표가 없으면 다음 프레임에서 화면비 추정(auto_set_baseline)으로 fallback
+    """
+    global _request_set_shoulder, _shoulder_coords
     _request_set_shoulder = True
+    _shoulder_coords = (left, right) if (left is not None and right is not None) else None
 
 
 def request_save_baseline():
@@ -38,9 +46,23 @@ def request_save_baseline():
     _request_save_baseline = True
 
 
-def apply_overlay(frame):
+def request_start_session():
+    """의료진의 '재활 세션 시작' 버튼 → 자세 가이드 모드 종료, 재활 측정 모드로 전환"""
+    global _request_start_session
+    _request_start_session = True
+
+
+def request_stop_session():
+    """의료진의 '세션 종료' 버튼 → 자세 가이드 모드로 복귀"""
+    global _request_stop_session
+    _request_stop_session = True
+
+
+def apply_overlay(frame, draw_text=True):
     """
     프레임에 오버레이 적용 + 분석 결과 반환
+    draw_text: True면 디버그용 텍스트를 프레임에 직접 그림.
+               False면 화면에 그 어떤 텍스트(cv2.putText)도 그리지 않음.
     반환: (frame, analysis)
     """
     global pose_mode
@@ -54,13 +76,6 @@ def apply_overlay(frame):
     landmarks = analyzer.get_landmarks(frame)
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
-    # 비대칭 지수는 모드와 관계없이 항상 계산 (자세 가이드 단계에서도 표시 필요)
-    if landmarks is not None:
-        asymmetry = analyzer.calculate_asymmetry(landmarks)
-        analysis["asymmetry"] = asymmetry
-        if analyzer.baseline is not None:
-            analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
-
     if pose_mode:
         # 자세 유도 모드
         if nose_x is not None:
@@ -69,10 +84,11 @@ def apply_overlay(frame):
             offset = face_result["편차"]
             analysis["face_ok"] = is_centered
             analysis["face_offset"] = offset
-            color = (0, 255, 0) if is_centered else (0, 0, 255)
-            cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        else:
+            if draw_text:
+                color = (0, 255, 0) if is_centered else (0, 0, 255)
+                cv2.putText(frame, f"Face center: {'OK' if is_centered else f'off {offset:.1f}%'}",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        elif draw_text:
             cv2.putText(frame, "No face detected", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
@@ -82,20 +98,29 @@ def apply_overlay(frame):
             tilt = shoulder_result["기울기"]
             analysis["shoulder_ok"] = is_level
             analysis["shoulder_tilt"] = tilt
-            color = (0, 255, 0) if is_level else (0, 0, 255)
-            cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
-                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        else:
+            if draw_text:
+                color = (0, 255, 0) if is_level else (0, 0, 255)
+                cv2.putText(frame, f"Shoulder: {'OK' if is_level else f'tilt {tilt:.1f}%'}",
+                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        elif draw_text:
             cv2.putText(frame, "Shoulder: set_baseline() needed",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
-        cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
-                    (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+        if draw_text:
+            cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
+                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
         # 재활 측정 모드
-        frame, _ = analyzer.analyze(frame)
-        cv2.putText(frame, "MODE: Rehabilitation Session",
-                    (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        if landmarks is not None:
+            asymmetry = analyzer.calculate_asymmetry(landmarks)
+            analysis["asymmetry"] = asymmetry
+            if analyzer.baseline is not None:
+                analysis["asym_diff"] = round(asymmetry - analyzer.baseline, 4)
+            
+            # [수정] analyzer.analyze(frame)를 지우고, 랜드마크 점만 직접 찍음
+            # 주황색 글씨 출력 원천 차단
+            for point in landmarks:
+                cv2.circle(frame, (int(point[0]), int(point[1])), 2, (0, 255, 0), -1)
 
     return frame, analysis
 
@@ -108,13 +133,14 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
     stop_event: 종료 신호
     """
     global pose_mode, _request_set_shoulder, _request_save_baseline
+    global _request_start_session, _request_stop_session, _shoulder_coords
 
     cap = cv2.VideoCapture(0)
     gui_mode = frame_callback is not None
 
     if not gui_mode:
         print(f"영상 송신 시작 - {SERVER_IP}:{UDP_PORT}")
-        print("B: 안면 baseline 저장 | S: 어깨 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
+        print("B: 안면 baseline 저장 | S: 어깨 기준점(자동) | R: 재활 세션 시작 | Q: 종료")
 
     while True:
         if stop_event and stop_event.is_set():
@@ -128,13 +154,25 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
 
         # 의료진 버튼 요청 처리
         if _request_set_shoulder:
-            auto_set_baseline(frame)
+            if _shoulder_coords:
+                set_baseline(_shoulder_coords[0], _shoulder_coords[1])
+            else:
+                auto_set_baseline(frame)
             _request_set_shoulder = False
+            _shoulder_coords = None
         if _request_save_baseline:
             analyzer.calibrate(frame)
             _request_save_baseline = False
+        if _request_start_session:
+            pose_mode = False
+            _request_start_session = False
+            print("[VideoSender] 세션 시작 (버튼) - 재활 측정 모드로 전환")
+        if _request_stop_session:
+            pose_mode = True
+            _request_stop_session = False
+            print("[VideoSender] 세션 종료 (버튼) - 자세 가이드 모드로 복귀")
 
-        frame, analysis = apply_overlay(frame)
+        frame, analysis = apply_overlay(frame, draw_text=not gui_mode)
 
         if gui_mode:
             frame_callback(frame.copy())
