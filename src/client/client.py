@@ -35,10 +35,8 @@ def handle_tcp():
                 break
             msg = data.decode().strip()
 
-            # 어깨/베이스라인/세션 CMD는 여기서 직접 처리
             handled = _handle_command(msg)
 
-            # 나머지는 GUI 콜백으로 전달
             if not handled and on_message_callback:
                 on_message_callback(msg)
         except OSError:
@@ -86,7 +84,11 @@ def _handle_command(msg: str) -> bool:
 
 
 def send_result(result: str):
-    tcp_sock.sendall(result.encode())
+    """
+    분석 결과를 서버로 전송. 줄바꿈으로 구분해서, 여러 번 연속으로 보내도
+    서버 쪽에서 한 번에 뭉쳐 받았을 때 줄 단위로 안전하게 쪼갤 수 있게 함
+    """
+    tcp_sock.sendall((result + "\n").encode())
 
 
 def receive_doctor_stream():
