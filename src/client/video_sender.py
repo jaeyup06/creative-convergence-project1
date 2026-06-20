@@ -21,20 +21,41 @@ sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 analyzer = FaceAsymmetryAnalyzer()
 pose_mode = True
 
+# 의료진 버튼 → 다음 프레임에 처리할 요청 플래그
 _request_set_shoulder = False
 _request_save_baseline = False
-_shoulder_coords = None
+_request_start_session = False
+_request_stop_session = False
+_shoulder_coords = None  # (left, right) 의료진이 클릭한 좌표. 없으면 자동 추정으로 fallback
 
 
 def request_set_shoulder(left: tuple = None, right: tuple = None):
+    """
+    의료진이 '어깨 기준점 설정' 버튼 누르면 호출
+    left, right: 의료진이 환자 화면에서 클릭한 (x, y) 좌표.
+                 좌표가 없으면 다음 프레임에서 화면비 추정(auto_set_baseline)으로 fallback
+    """
     global _request_set_shoulder, _shoulder_coords
     _request_set_shoulder = True
     _shoulder_coords = (left, right) if (left is not None and right is not None) else None
 
 
 def request_save_baseline():
+    """의료진이 '베이스라인 저장' 버튼 누르면 호출"""
     global _request_save_baseline
     _request_save_baseline = True
+
+
+def request_start_session():
+    """의료진의 '재활 세션 시작' 버튼 → 자세 가이드 모드 종료, 재활 측정 모드로 전환"""
+    global _request_start_session
+    _request_start_session = True
+
+
+def request_stop_session():
+    """의료진의 '세션 종료' 버튼 → 자세 가이드 모드로 복귀"""
+    global _request_stop_session
+    _request_stop_session = True
 
 
 def apply_overlay(frame, draw_text=True):
@@ -57,6 +78,7 @@ def apply_overlay(frame, draw_text=True):
     nose_x = int(landmarks[30][0]) if landmarks is not None else None
 
     if pose_mode:
+        # 자세 유도 모드
         if nose_x is not None:
             face_result = check_face_center(frame, nose_x)
             is_centered = face_result["중앙 정렬"]
@@ -89,6 +111,7 @@ def apply_overlay(frame, draw_text=True):
             cv2.putText(frame, "MODE: Pose Guide | B: face baseline | R: start session",
                         (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
     else:
+        # 재활 측정 모드
         if landmarks is not None:
             asymmetry = analyzer.calculate_asymmetry(landmarks)
             analysis["asymmetry"] = asymmetry
@@ -104,14 +127,20 @@ def apply_overlay(frame, draw_text=True):
 
 def send_video(frame_callback=None, stop_event: threading.Event = None,
                analysis_callback=None):
-    global pose_mode, _request_set_shoulder, _request_save_baseline, _shoulder_coords
+    """
+    frame_callback: 오버레이 적용된 프레임 전달 (GUI 표시용)
+    analysis_callback: 분석 결과 dict 전달 (자세 가이드/수치 표시용)
+    stop_event: 종료 신호
+    """
+    global pose_mode, _request_set_shoulder, _request_save_baseline
+    global _request_start_session, _request_stop_session, _shoulder_coords
 
     cap = cv2.VideoCapture(0)
     gui_mode = frame_callback is not None
 
     if not gui_mode:
         print(f"영상 송신 시작 - {SERVER_IP}:{UDP_PORT}")
-        print("B: 안면 baseline 저장 | R: 재활 세션 시작 | Q: 종료")
+        print("B: 안면 baseline 저장 | S: 어깨 기준점(자동) | R: 재활 세션 시작 | Q: 종료")
 
     while True:
         if stop_event and stop_event.is_set():
@@ -123,6 +152,7 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
 
         frame = cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT))
 
+        # 의료진 버튼 요청 처리
         if _request_set_shoulder:
             if _shoulder_coords:
                 set_baseline(_shoulder_coords[0], _shoulder_coords[1])
@@ -133,6 +163,14 @@ def send_video(frame_callback=None, stop_event: threading.Event = None,
         if _request_save_baseline:
             analyzer.calibrate(frame)
             _request_save_baseline = False
+        if _request_start_session:
+            pose_mode = False
+            _request_start_session = False
+            print("[VideoSender] 세션 시작 (버튼) - 재활 측정 모드로 전환")
+        if _request_stop_session:
+            pose_mode = True
+            _request_stop_session = False
+            print("[VideoSender] 세션 종료 (버튼) - 자세 가이드 모드로 복귀")
 
         frame, analysis = apply_overlay(frame, draw_text=not gui_mode)
 

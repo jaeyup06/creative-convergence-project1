@@ -20,21 +20,26 @@ from src.server.session_recorder import save_excel
 
 PATIENTS_FILE = "data/sessions/patients.json"
 
+# TCP 소켓
 tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 tcp_sock.bind((SERVER_IP, TCP_PORT))
 
+# UDP 소켓
 udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
 udp_sock.bind((SERVER_IP, UDP_PORT))
 
+# 패킷 분류 Queue
 video_queue = queue.Queue()
 audio_queue = queue.Queue()
 
+# 전역 변수
 client_conn = None
 client_udp_addr = None
 gui: ServerGUI = None
 
+# 제어 이벤트
 camera_event = threading.Event()
 doctor_audio_event = threading.Event()
 patient_mute_event = threading.Event()
@@ -165,12 +170,14 @@ def on_session_start():
     print("세션 시작")
     if gui and gui.current_patient:
         gui.session_active = True
+        send_message("CMD:START_SESSION")
 
 def on_session_stop():
     print("세션 종료 및 저장")
     if gui and gui.current_patient:
         name = gui.current_patient["name"]
         save_excel(name, {})
+        send_message("CMD:STOP_SESSION")
 
 def on_camera_toggle(active: bool):
     if active:

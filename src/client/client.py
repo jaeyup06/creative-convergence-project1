@@ -7,11 +7,17 @@ import numpy as np
 import sounddevice as sd
 from src.common.config import SERVER_IP, TCP_PORT, AUDIO_SAMPLE_RATE, AUDIO_CHUNK_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.common.packet_format import PKT_DOCTOR_VIDEO, PKT_DOCTOR_AUDIO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
-from src.client.video_sender import send_video, sock as udp_sock, request_set_shoulder, request_save_baseline
+from src.client.video_sender import (
+    send_video, sock as udp_sock,
+    request_set_shoulder, request_save_baseline,
+    request_start_session, request_stop_session,
+)
 from src.client.audio_sender import send_audio
 
+# TCP 소켓
 tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+# 콜백
 doctor_frame_callback = None
 on_message_callback = None
 
@@ -29,8 +35,10 @@ def handle_tcp():
                 break
             msg = data.decode().strip()
 
+            # 어깨/베이스라인/세션 CMD는 여기서 직접 처리
             handled = _handle_command(msg)
 
+            # 나머지는 GUI 콜백으로 전달
             if not handled and on_message_callback:
                 on_message_callback(msg)
         except OSError:
@@ -42,7 +50,7 @@ def handle_tcp():
 
 def _handle_command(msg: str) -> bool:
     """
-    어깨/베이스라인 관련 CMD 처리
+    어깨/베이스라인/세션 관련 CMD 처리
     처리했으면 True, 아니면 False 반환
     """
     handled = False
@@ -65,6 +73,14 @@ def _handle_command(msg: str) -> bool:
         elif line == "CMD:SAVE_BASELINE":
             request_save_baseline()
             print("[Client] 베이스라인 저장 요청 수신")
+            handled = True
+        elif line == "CMD:START_SESSION":
+            request_start_session()
+            print("[Client] 재활 세션 시작 요청 수신 (자세 가이드 모드 종료)")
+            handled = True
+        elif line == "CMD:STOP_SESSION":
+            request_stop_session()
+            print("[Client] 재활 세션 종료 요청 수신 (자세 가이드 모드로 복귀)")
             handled = True
     return handled
 
