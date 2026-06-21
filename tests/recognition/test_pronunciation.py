@@ -1,6 +1,4 @@
 # tests/recognition/test_pronunciation.py
-# 네트워크/ffmpeg 의존을 피하기 위해 TTS 없는 순수 DTW 함수(_similarity)와
-# 입력 가드(score_pronunciation의 빈 텍스트 처리)만 검증한다.
 import numpy as np
 from src.recognition.pronunciation import _similarity, score_pronunciation
 from src.common.config import ANALYZE_SR
