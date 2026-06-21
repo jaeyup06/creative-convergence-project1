@@ -26,7 +26,7 @@ class PatientGUI:
         self._audio_thread = None
 
         self._last_frame = None
-        self.doctor_camera_active = True
+        self.doctor_camera_active = True  # 기본 True: CMD:CAMERA_ON 수신 전 프레임도 표시
 
         self.on_patient_camera_on = None
         self.on_patient_camera_off = None
@@ -222,7 +222,10 @@ class PatientGUI:
             self._audio_stop.clear()
             self._audio_thread = threading.Thread(
                 target=send_audio,
-                kwargs={"stop_event": self._audio_stop},
+                kwargs={
+                    "stop_event": self._audio_stop,
+                    "volume_callback": self.update_patient_volume  # 게이지 업데이트 연결
+                },
                 daemon=True
             )
             self._audio_thread.start()
@@ -231,6 +234,7 @@ class PatientGUI:
             self.audio_active = False
             self._audio_stop.set()
             self.mic_btn.config(text="마이크 켜기", bg="#F0F0F0")
+            self.update_patient_volume(0)  # 마이크 끌 때 게이지 0으로 초기화
 
     def update_sentence(self, text: str):
         self.sentence_var.set(text)
@@ -256,16 +260,6 @@ class PatientGUI:
                 self.root.after(0, self._clear_doctor_frame)
             elif line == "CMD:CAMERA_ON":
                 self.doctor_camera_active = True
-            elif line.startswith("RESULT:AUDIO:"):
-                parts = line.split(":")
-                if len(parts) >= 5:
-                    try:
-                        acc = float(parts[2]) if parts[2] != "None" else None
-                        spd = float(parts[3]) if parts[3] != "None" else None
-                        sil = float(parts[4]) if parts[4] != "None" else None
-                        self.root.after(0, lambda a=acc, s=spd, sl=sil: self.update_metrics(a, s, sl))
-                    except ValueError:
-                        pass
             elif line.startswith("SENTENCE:"):
                 parts = line.split(":", 2)
                 if len(parts) == 3:
@@ -319,6 +313,10 @@ class PatientGUI:
         self.root.after(0, lambda v=volume: self.doctor_vol_bar.configure(value=v))
 
     def update_analysis(self, analysis: dict):
+        """
+        video_sender의 analysis_callback으로 호출됨 (영상 스레드에서 실행)
+        분석 결과를 자세 가이드 칸에 실시간 반영 + 비대칭 지수는 서버로도 전송
+        """
         face_ok = analysis.get("face_ok")
         face_offset = analysis.get("face_offset")
         shoulder_ok = analysis.get("shoulder_ok")
@@ -332,6 +330,7 @@ class PatientGUI:
         self._send_analysis_result(asymmetry, asym_diff)
 
     def _send_analysis_result(self, asymmetry, asym_diff):
+        """비대칭 지수를 의료진 서버로 TCP 전송 (RESULT:ASYMMETRY:값:편차)"""
         if asymmetry is None:
             return
         from src.client.client import send_result
