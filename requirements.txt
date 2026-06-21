@@ -8,3 +8,10 @@ requests
 beautifulsoup4
 numpy
 Pillow
+gTTS          # 발음 비교용 표준 샘플 생성(TTS). 구글 서버 호출 → 인터넷 필요
+soundfile     # librosa 음성 입출력 백엔드
+
+# [주의] gTTS는 mp3로만 출력됨. mp3 디코딩을 위해 아래 중 하나가 시스템에 설치돼야 함
+#   - ffmpeg  (권장, 모든 OS)               : https://ffmpeg.org
+#   - 또는 libsndfile >= 1.1.0 (최신 soundfile)
+# pip 로 설치되는 게 아니라 OS 패키지로 별도 설치해야 함.

@@ -26,7 +26,7 @@ class PatientGUI:
         self._audio_thread = None
 
         self._last_frame = None
-        self.doctor_camera_active = True  # 기본 True: CMD:CAMERA_ON 수신 전 프레임도 표시
+        self.doctor_camera_active = True
 
         self.on_patient_camera_on = None
         self.on_patient_camera_off = None
@@ -222,7 +222,10 @@ class PatientGUI:
             self._audio_stop.clear()
             self._audio_thread = threading.Thread(
                 target=send_audio,
-                kwargs={"stop_event": self._audio_stop},
+                kwargs={
+                    "stop_event": self._audio_stop,
+                    "volume_callback": self.update_patient_volume 
+                },
                 daemon=True
             )
             self._audio_thread.start()
@@ -231,6 +234,7 @@ class PatientGUI:
             self.audio_active = False
             self._audio_stop.set()
             self.mic_btn.config(text="마이크 켜기", bg="#F0F0F0")
+            self.update_patient_volume(0) 
 
     def update_sentence(self, text: str):
         self.sentence_var.set(text)
@@ -302,17 +306,20 @@ class PatientGUI:
         self.doctor_canvas.config(image=photo, text="")
         self.doctor_canvas.image = photo
 
+    # [수정] 직접 값을 대입하여 Tkinter 에러 원천 차단
     def update_patient_volume(self, volume: int):
-        self.root.after(0, lambda v=volume: self.volume_bar.configure(value=v))
+        self.root.after(0, lambda v=volume: self._set_pat_vol(v))
+
+    def _set_pat_vol(self, v):
+        self.volume_bar["value"] = v
 
     def update_doctor_volume(self, volume: int):
-        self.root.after(0, lambda v=volume: self.doctor_vol_bar.configure(value=v))
+        self.root.after(0, lambda v=volume: self._set_doc_vol(v))
+
+    def _set_doc_vol(self, v):
+        self.doctor_vol_bar["value"] = v
 
     def update_analysis(self, analysis: dict):
-        """
-        video_sender의 analysis_callback으로 호출됨 (영상 스레드에서 실행)
-        분석 결과를 자세 가이드 칸에 실시간 반영 + 비대칭 지수는 서버로도 전송
-        """
         face_ok = analysis.get("face_ok")
         face_offset = analysis.get("face_offset")
         shoulder_ok = analysis.get("shoulder_ok")
@@ -326,7 +333,6 @@ class PatientGUI:
         self._send_analysis_result(asymmetry, asym_diff)
 
     def _send_analysis_result(self, asymmetry, asym_diff):
-        """비대칭 지수를 의료진 서버로 TCP 전송 (RESULT:ASYMMETRY:값:편차)"""
         if asymmetry is None:
             return
         from src.client.client import send_result
@@ -381,6 +387,7 @@ if __name__ == "__main__":
 
     client_mod.doctor_frame_callback = gui.update_doctor_frame
     client_mod.on_message_callback = gui.handle_server_message
+    client_mod.doctor_volume_callback = gui.update_doctor_volume
 
     gui.on_patient_camera_on = lambda: client_mod.send_result("CMD:PATIENT_CAM_ON")
     gui.on_patient_camera_off = lambda: client_mod.send_result("CMD:PATIENT_CAM_OFF")
