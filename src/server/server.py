@@ -83,10 +83,6 @@ def udp_dispatcher():
             break
 
 def _handle_result_message(line: str) -> bool:
-    """
-    환자가 보낸 RESULT: 메시지 처리 (예: RESULT:ASYMMETRY:0.1234:0.0050)
-    처리했으면 True 반환
-    """
     global latest_asymmetry, latest_asym_diff
 
     if not line.startswith("RESULT:ASYMMETRY:"):
@@ -96,7 +92,7 @@ def _handle_result_message(line: str) -> bool:
     try:
         asymmetry = float(parts[2])
     except (IndexError, ValueError):
-        return True  # RESULT: 메시지 자체는 처리한 걸로 보고 무시
+        return True 
 
     asym_diff = None
     if len(parts) > 3 and parts[3] != "":
@@ -170,7 +166,6 @@ def handle_tcp():
 
 def send_message(msg: str):
     global client_conn, latest_sentence
-    # 발화 문장(SENTENCE:n:본문)을 보낼 때 본문을 발음 비교 대상으로 보관
     if msg.startswith("SENTENCE:"):
         parts = msg.split(":", 2)
         if len(parts) == 3 and parts[2].strip():
@@ -205,26 +200,40 @@ def capture_doctor_video():
             time.sleep(0.1)
 
 def capture_doctor_audio():
-    while True:
+    global client_udp_addr
+    
+    def callback(indata, frames, time_info, status):
+        # 마이크가 꺼져있거나 클라이언트 연결이 없으면 게이지를 0으로 만들고 패킷 전송 안 함
         if not doctor_audio_event.is_set() or not client_udp_addr:
-            time.sleep(0.1)
-            continue
+            if gui:
+                gui.root.after(0, lambda: gui.update_doctor_volume(0))
+            return
+
+        # 의료진 본인 화면(서버)의 음량 게이지 업데이트
+        if gui:
+            rms = int(np.sqrt(np.mean(indata.astype(np.float32)**2)))
+            volume = min(int(rms / 300 * 100), 100)
+            gui.root.after(0, lambda v=volume: gui.update_doctor_volume(v))
+
+        packet = bytes([PKT_DOCTOR_AUDIO]) + indata.tobytes()
         try:
-            audio = sd.rec(AUDIO_CHUNK_SIZE, samplerate=AUDIO_SAMPLE_RATE, channels=1, dtype=np.int16)
-            sd.wait()
-            if not doctor_audio_event.is_set():
-                continue
-            packet = bytes([PKT_DOCTOR_AUDIO]) + audio.tobytes()
             udp_sock.sendto(packet, client_udp_addr)
-        except Exception:
-            time.sleep(0.1)
+        except OSError:
+            pass
+
+    try:
+        with sd.InputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1, dtype=np.int16, 
+                            blocksize=AUDIO_CHUNK_SIZE, callback=callback):
+            while True:
+                sd.sleep(100)
+    except Exception as e:
+        print(f"[Server] 의료진 마이크 오류: {e}")
 
 def on_session_start():
     global latest_asymmetry, latest_asym_diff, latest_sentence
     print("세션 시작")
     if gui and gui.current_patient:
         gui.session_active = True
-        # 새 세션: 음성 누적 버퍼 초기화 + 직전 세션 수치 리셋
         start_session()
         latest_asymmetry = None
         latest_asym_diff = None
@@ -232,17 +241,15 @@ def on_session_start():
         send_message("CMD:START_SESSION")
 
 def _finalize_session(name: str, audio_bytes: bytes, target_text: str, asymmetry):
-    """세션 종료 후 백그라운드에서 음성 분석 -> GUI 표시 + 엑셀/음성 저장.
-    (pyin·DTW가 수 초 걸릴 수 있어 GUI 스레드를 막지 않도록 별도 스레드에서 실행)"""
     audio_np = (np.frombuffer(audio_bytes, dtype=np.int16)
                 if audio_bytes else np.array([], dtype=np.int16))
 
     voice = analyze_voice(audio_np, AUDIO_SAMPLE_RATE)
     accuracy = score_pronunciation(audio_np, target_text, AUDIO_SAMPLE_RATE) if target_text else None
 
+    # 분석이 끝나면 환자 클라이언트에게도 결과를 전송한다
     send_message(f"RESULT:AUDIO:{accuracy}:{voice.get('speech_rate')}:{voice.get('silence_sec')}")
 
-    # 의료진 GUI 수치 갱신
     if gui:
         gui.root.after(0, lambda: gui.update_metrics({
             "asymmetry": asymmetry,
@@ -251,7 +258,6 @@ def _finalize_session(name: str, audio_bytes: bytes, target_text: str, asymmetry
             "silence": voice.get("silence_sec"),
         }))
 
-    # 엑셀 누적 저장 (컬럼: 비대칭 지수 / 발음 정확도 / 발화 속도 / 음량 / 묵음 구간)
     session_data = {
         "비대칭 지수": asymmetry if asymmetry is not None else "-",
         "발음 정확도": accuracy if accuracy is not None else "-",
@@ -271,7 +277,6 @@ def on_session_stop():
     name = gui.current_patient["name"]
     send_message("CMD:STOP_SESSION")
 
-    # 누적 음성 스냅샷을 떠서 분석은 백그라운드로 (GUI 멈춤 방지)
     audio_bytes = snapshot_session()
     threading.Thread(
         target=_finalize_session,
@@ -300,12 +305,10 @@ def on_mute_patient(muted: bool):
         patient_mute_event.clear()
 
 def on_set_shoulder(left: tuple, right: tuple):
-    """의료진이 환자 화면에서 어깨 두 지점을 클릭하면 좌표를 환자 클라이언트로 전송"""
     send_message(f"CMD:SET_SHOULDER:{left[0]},{left[1]},{right[0]},{right[1]}")
     print(f"[Server] 어깨 기준점 좌표 전송 - 왼쪽:{left} 오른쪽:{right}")
 
 def on_save_baseline():
-    """의료진이 '베이스라인 저장' 버튼을 누르면 환자 클라이언트에 안면 baseline 저장 요청"""
     send_message("CMD:SAVE_BASELINE")
     print("[Server] 베이스라인 저장 요청 전송")
 
@@ -331,8 +334,7 @@ if __name__ == "__main__":
     threading.Thread(target=udp_dispatcher, daemon=True).start()
     threading.Thread(target=capture_doctor_video, daemon=True).start()
     threading.Thread(target=capture_doctor_audio, daemon=True).start()
-    threading.Thread(target=lambda: receive_audio(audio_queue, gui=gui,
-                                                   mute_event=patient_mute_event), daemon=True).start()
+    threading.Thread(target=lambda: receive_audio(audio_queue, gui=gui, mute_event=patient_mute_event), daemon=True).start()
     threading.Thread(target=lambda: receive_video(video_queue, frame_callback=video_callback), daemon=True).start()
 
     print("서버 실행 중")

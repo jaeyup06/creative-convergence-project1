@@ -20,6 +20,7 @@ tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 # 콜백
 doctor_frame_callback = None
 on_message_callback = None
+doctor_volume_callback = None  # 의료진 음량 표시용 콜백 추가
 
 
 def handle_tcp():
@@ -47,10 +48,6 @@ def handle_tcp():
 
 
 def _handle_command(msg: str) -> bool:
-    """
-    어깨/베이스라인/세션 관련 CMD 처리
-    처리했으면 True, 아니면 False 반환
-    """
     handled = False
     for line in msg.split("\n"):
         line = line.strip()
@@ -80,19 +77,19 @@ def _handle_command(msg: str) -> bool:
             request_stop_session()
             print("[Client] 재활 세션 종료 요청 수신 (자세 가이드 모드로 복귀)")
             handled = True
+        elif line == "CMD:DOCTOR_MIC_OFF":
+            # 의료진 마이크 종료 시 즉시 환자 화면 게이지 0으로 초기화
+            if doctor_volume_callback:
+                doctor_volume_callback(0)
+            handled = True
     return handled
 
 
 def send_result(result: str):
-    """
-    분석 결과를 서버로 전송. 줄바꿈으로 구분해서, 여러 번 연속으로 보내도
-    서버 쪽에서 한 번에 뭉쳐 받았을 때 줄 단위로 안전하게 쪼갤 수 있게 함
-    """
     tcp_sock.sendall((result + "\n").encode())
 
 
 def receive_doctor_stream():
-    """서버에서 송신하는 의료진 영상·음성 수신"""
     s = [b'\xff' * VIDEO_PACKET_SIZE for _ in range(VIDEO_PACKET_COUNT)]
 
     stream = sd.OutputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1, dtype=np.int16)
@@ -121,10 +118,22 @@ def receive_doctor_stream():
 
             elif pkt_type == PKT_DOCTOR_AUDIO:
                 payload = data[1:]
+                
+                # 즉각적인 UI 반영 (버퍼링 대기 없이 매 패킷마다)
+                if doctor_volume_callback:
+                    temp_audio = np.frombuffer(payload, dtype=np.int16)
+                    rms = int(np.sqrt(np.mean(temp_audio.astype(np.float32)**2)))
+                    volume = min(int(rms / 300 * 100), 100)
+                    doctor_volume_callback(volume)
+
                 audio_buffer += payload
                 if len(audio_buffer) >= AUDIO_CHUNK_SIZE * 8:
                     audio = np.frombuffer(audio_buffer, dtype=np.int16)
-                    stream.write(audio)
+                    try:
+                        # [핵심] 재생 에러(Underflow 등)가 나도 수신 스레드가 죽지 않도록 방어
+                        stream.write(audio)
+                    except Exception:
+                        pass
                     audio_buffer = b''
 
         except OSError:
