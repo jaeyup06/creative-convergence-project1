@@ -14,9 +14,11 @@ import sounddevice as sd
 from src.common.config import SERVER_IP, TCP_PORT, UDP_PORT, VIDEO_WIDTH, VIDEO_HEIGHT, AUDIO_SAMPLE_RATE, AUDIO_CHUNK_SIZE
 from src.common.packet_format import PKT_PATIENT_VIDEO, PKT_PATIENT_AUDIO, PKT_DOCTOR_VIDEO, PKT_DOCTOR_AUDIO, VIDEO_PACKET_COUNT, VIDEO_PACKET_SIZE
 from src.server.video_receiver import receive_video
-from src.server.audio_analyzer import receive_audio
+from src.server.audio_analyzer import receive_audio, start_session, snapshot_session
 from src.server.gui_server import ServerGUI
-from src.server.session_recorder import save_excel
+from src.server.session_recorder import save_excel, save_audio
+from src.recognition.voice_analyzer import analyze_voice
+from src.recognition.pronunciation import score_pronunciation
 
 PATIENTS_FILE = "data/sessions/patients.json"
 
@@ -39,9 +41,11 @@ client_conn = None
 client_udp_addr = None
 gui: ServerGUI = None
 
-# 마지막으로 수신한 비대칭 지수 (세션 종료 시 엑셀 저장용으로 추후 활용)
+# 마지막으로 수신한 비대칭 지수 (세션 종료 시 엑셀 저장용)
 latest_asymmetry = None
 latest_asym_diff = None
+# 마지막으로 환자에게 보낸 발화 문장 (발음 정확도 DTW 비교 대상)
+latest_sentence = None
 
 # 제어 이벤트
 camera_event = threading.Event()
@@ -165,7 +169,12 @@ def handle_tcp():
     print("TCP 연결 종료")
 
 def send_message(msg: str):
-    global client_conn
+    global client_conn, latest_sentence
+    # 발화 문장(SENTENCE:n:본문)을 보낼 때 본문을 발음 비교 대상으로 보관
+    if msg.startswith("SENTENCE:"):
+        parts = msg.split(":", 2)
+        if len(parts) == 3 and parts[2].strip():
+            latest_sentence = parts[2].strip()
     if client_conn:
         try:
             client_conn.sendall(msg.encode())
@@ -211,17 +220,62 @@ def capture_doctor_audio():
             time.sleep(0.1)
 
 def on_session_start():
+    global latest_asymmetry, latest_asym_diff, latest_sentence
     print("세션 시작")
     if gui and gui.current_patient:
         gui.session_active = True
+        # 새 세션: 음성 누적 버퍼 초기화 + 직전 세션 수치 리셋
+        start_session()
+        latest_asymmetry = None
+        latest_asym_diff = None
+        latest_sentence = None
         send_message("CMD:START_SESSION")
+
+def _finalize_session(name: str, audio_bytes: bytes, target_text: str, asymmetry):
+    """세션 종료 후 백그라운드에서 음성 분석 -> GUI 표시 + 엑셀/음성 저장.
+    (pyin·DTW가 수 초 걸릴 수 있어 GUI 스레드를 막지 않도록 별도 스레드에서 실행)"""
+    audio_np = (np.frombuffer(audio_bytes, dtype=np.int16)
+                if audio_bytes else np.array([], dtype=np.int16))
+
+    voice = analyze_voice(audio_np, AUDIO_SAMPLE_RATE)
+    accuracy = score_pronunciation(audio_np, target_text, AUDIO_SAMPLE_RATE) if target_text else None
+
+    # 의료진 GUI 수치 갱신
+    if gui:
+        gui.root.after(0, lambda: gui.update_metrics({
+            "asymmetry": asymmetry,
+            "pronunciation": accuracy,
+            "speech_rate": voice.get("speech_rate"),
+            "silence": voice.get("silence_sec"),
+        }))
+
+    # 엑셀 누적 저장 (컬럼: 비대칭 지수 / 발음 정확도 / 발화 속도 / 음량 / 묵음 구간)
+    session_data = {
+        "비대칭 지수": asymmetry if asymmetry is not None else "-",
+        "발음 정확도": accuracy if accuracy is not None else "-",
+        "발화 속도": voice.get("speech_rate") if voice.get("speech_rate") is not None else "-",
+        "음량": voice.get("volume") if voice.get("volume") is not None else "-",
+        "묵음 구간": voice.get("silence_sec") if voice.get("silence_sec") is not None else "-",
+    }
+    save_excel(name, session_data)
+    if audio_bytes:
+        save_audio(name, audio_bytes, AUDIO_SAMPLE_RATE)
+    print(f"[Server] 세션 분석 완료: {name} / 발음정확도={accuracy} / {voice}")
 
 def on_session_stop():
     print("세션 종료 및 저장")
-    if gui and gui.current_patient:
-        name = gui.current_patient["name"]
-        save_excel(name, {})
-        send_message("CMD:STOP_SESSION")
+    if not (gui and gui.current_patient):
+        return
+    name = gui.current_patient["name"]
+    send_message("CMD:STOP_SESSION")
+
+    # 누적 음성 스냅샷을 떠서 분석은 백그라운드로 (GUI 멈춤 방지)
+    audio_bytes = snapshot_session()
+    threading.Thread(
+        target=_finalize_session,
+        args=(name, audio_bytes, latest_sentence, latest_asymmetry),
+        daemon=True,
+    ).start()
 
 def on_camera_toggle(active: bool):
     if active:
