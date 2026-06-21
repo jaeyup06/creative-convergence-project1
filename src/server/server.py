@@ -240,6 +240,8 @@ def _finalize_session(name: str, audio_bytes: bytes, target_text: str, asymmetry
     voice = analyze_voice(audio_np, AUDIO_SAMPLE_RATE)
     accuracy = score_pronunciation(audio_np, target_text, AUDIO_SAMPLE_RATE) if target_text else None
 
+    send_message(f"RESULT:AUDIO:{accuracy}:{voice.get('speech_rate')}:{voice.get('silence_sec')}")
+
     # 의료진 GUI 수치 갱신
     if gui:
         gui.root.after(0, lambda: gui.update_metrics({
